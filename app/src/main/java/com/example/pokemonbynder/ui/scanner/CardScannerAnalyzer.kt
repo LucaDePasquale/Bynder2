@@ -5,84 +5,91 @@ import androidx.annotation.OptIn
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import com.example.pokemonbynder.scanner.Box
+import com.example.pokemonbynder.scanner.CardTextParser
+import com.example.pokemonbynder.scanner.OcrLine
+import com.example.pokemonbynder.scanner.ScanReading
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
+/** Dimensioni del riquadro giallo mostrato sopra la fotocamera (le usa anche l'analizzatore). */
+object ScannerGuide {
+    const val WIDTH_DP = 280
+    const val HEIGHT_DP = 390
+}
+
+/**
+ * Legge il testo della carta dalla fotocamera e lo trasforma in una [ScanReading].
+ *
+ * Considera solo il testo dentro il riquadro guida. Il riquadro è al centro dello schermo e l'anteprima
+ * usa FILL_CENTER, quindi si calcola dove cade nell'immagine analizzata e si cercano
+ * il nome nella fascia alta e il numero (es. 025/165) in quella bassa.
+ *
+ * @param previewSize larghezza e altezza in pixel di PreviewView (0 se non ancora disposta)
+ * @param guideSizePx larghezza e altezza in pixel del riquadro guida
+ */
 class CardScannerAnalyzer(
-    private val onCardDetected: (String, String) -> Unit
+    private val previewSize: () -> Pair<Int, Int>,
+    private val guideSizePx: Pair<Int, Int>,
+    private val onReading: (ScanReading) -> Unit
 ) : ImageAnalysis.Analyzer {
 
+    private companion object {
+        const val MIN_INTERVAL_MS = 400L
+    }
+
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    @Volatile
     private var lastProcessingTime = 0L
 
     @OptIn(ExperimentalGetImage::class)
     override fun analyze(imageProxy: ImageProxy) {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastProcessingTime < 1000) { 
+        val startedAt = System.currentTimeMillis()
+        val mediaImage = imageProxy.image
+        val (viewWidth, viewHeight) = previewSize()
+        if (startedAt - lastProcessingTime < MIN_INTERVAL_MS || mediaImage == null || viewWidth <= 0 || viewHeight <= 0) {
             imageProxy.close()
             return
         }
 
-        val mediaImage = imageProxy.image
-        if (mediaImage != null) {
-            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-            recognizer.process(image)
-                .addOnSuccessListener { visionText ->
-                    if (visionText.text.isNotBlank()) {
-                        extractCardInfo(visionText)
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        val uprightWidth = if (rotation % 180 == 0) imageProxy.width else imageProxy.height
+        val uprightHeight = if (rotation % 180 == 0) imageProxy.height else imageProxy.width
+        val guide = guideInImage(uprightWidth, uprightHeight, viewWidth, viewHeight)
+
+        recognizer.process(InputImage.fromMediaImage(mediaImage, rotation))
+            .addOnSuccessListener { visionText ->
+                val lines = visionText.textBlocks
+                    .flatMap { it.lines }
+                    .mapNotNull { line ->
+                        val rect = line.boundingBox ?: return@mapNotNull null
+                        OcrLine(line.text, Box(rect.left, rect.top, rect.right, rect.bottom))
                     }
+                CardTextParser.parse(lines, guide)?.let { reading ->
+                    Log.d("Scanner", "Nomi: ${reading.nameLines} | Numero: ${reading.number} | Lingua: ${reading.languageHint}")
+                    onReading(reading)
                 }
-                .addOnCompleteListener {
-                    lastProcessingTime = currentTime
-                    imageProxy.close()
-                }
-        } else {
-            imageProxy.close()
-        }
+            }
+            .addOnFailureListener { Log.e("Scanner", "OCR non riuscito", it) }
+            .addOnCompleteListener {
+                lastProcessingTime = startedAt
+                imageProxy.close()
+            }
     }
 
-    private fun extractCardInfo(visionText: Text) {
-        val allLines = visionText.textBlocks.flatMap { it.lines }
-        if (allLines.isEmpty()) return
+    /** Dove cade il riquadro guida (al centro dell'anteprima, FILL_CENTER) nell'immagine analizzata. */
+    private fun guideInImage(imageWidth: Int, imageHeight: Int, viewWidth: Int, viewHeight: Int): Box {
+        val scale = maxOf(viewWidth.toFloat() / imageWidth, viewHeight.toFloat() / imageHeight)
+        val width = (guideSizePx.first / scale).toInt()
+        val height = (guideSizePx.second / scale).toInt()
+        val left = imageWidth / 2 - width / 2
+        val top = imageHeight / 2 - height / 2
+        return Box(left, top, left + width, top + height)
+    }
 
-        // Regex per il numero della carta (es: 151/165, 151/165, 151 165)
-        val numberRegex = Regex("""(\d{1,3})\s?[/|\\|\s]\s?(\d{1,3})""")
-        var detectedNumber = ""
-        var detectedName = ""
-
-        // 1. Cerchiamo il numero della carta
-        for (line in allLines) {
-            val match = numberRegex.find(line.text)
-            if (match != null) {
-                detectedNumber = match.groupValues[1]
-                break
-            }
-        }
-
-        // 2. Cerchiamo il nome del Pokémon
-        val blacklist = listOf("HP", "STAGE", "BASIC", "EVOLVES", "LEVEL", "POCKET", "MONSTERS", "TRAINER", "ITEM", "VMAX", "VSTAR")
-        
-        // Ordiniamo le righe dall'alto verso il basso
-        val sortedLines = allLines.sortedBy { it.boundingBox?.top ?: 0 }
-        
-        for (line in sortedLines.take(10)) {
-            val text = line.text.trim()
-            val upper = text.uppercase()
-            
-            if (text.length in 3..25 && 
-                !text.contains("/") && 
-                !text.any { it.isDigit() } &&
-                blacklist.none { upper.contains(it) }) {
-                detectedName = text
-                break
-            }
-        }
-
-        if (detectedName.isNotBlank()) {
-            Log.d("Scanner", "Rilevato: $detectedName | Numero: $detectedNumber")
-            onCardDetected(detectedName, detectedNumber)
-        }
+    fun close() {
+        recognizer.close()
     }
 }

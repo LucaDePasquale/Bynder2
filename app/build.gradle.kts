@@ -61,9 +61,7 @@ dependencies {
     // ML Kit
     implementation(libs.mlkit.text.recognition)
 
-    // Retrofit & Gson
-    implementation(libs.retrofit.lib)
-    implementation(libs.retrofit.converter.gson)
+    // Gson (usato dai TypeConverter di Room)
     implementation(libs.google.gson)
 
     // Room

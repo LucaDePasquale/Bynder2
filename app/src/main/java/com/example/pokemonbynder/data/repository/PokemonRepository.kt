@@ -1,78 +1,95 @@
 package com.example.pokemonbynder.data.repository
 
 import com.example.pokemonbynder.data.local.PokemonDao
+import com.example.pokemonbynder.data.local.catalog.CatalogCard
+import com.example.pokemonbynder.data.local.catalog.CatalogDao
 import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.PokemonCard
-import com.example.pokemonbynder.data.remote.CardDto
-import com.example.pokemonbynder.data.remote.PokemonApiService
-import com.example.pokemonbynder.data.remote.SetDto
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import com.example.pokemonbynder.scanner.Candidate
+import com.example.pokemonbynder.scanner.CardMatcher
+import com.example.pokemonbynder.scanner.CardText
+import com.example.pokemonbynder.scanner.ScanReading
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import kotlin.math.abs
+
+/** Esito di una ricerca: candidati in ordine di probabilità e se il primo è abbastanza sicuro. */
+data class ScanMatch(val candidates: List<Candidate>, val confident: Boolean)
 
 class PokemonRepository(
-    private val apiService: PokemonApiService,
-    private val pokemonDao: PokemonDao
+    private val pokemonDao: PokemonDao,
+    private val catalogDao: CatalogDao
 ) {
-    val allCards: Flow<List<PokemonCard>> = pokemonDao.getAllCards()
-    private var cachedSets: List<SetDto>? = null
-
-    /**
-     * Cerca una carta nel catalogo GitHub scaricando i file dei set.
-     * Utilizza coroutine parallele (lotti da 10) per velocizzare la ricerca partendo dai set più recenti.
-     */
-    suspend fun searchCardOnline(name: String, number: String): CardDto? = coroutineScope {
-        try {
-            // Carica la lista dei set e ordina dal più recente
-            val sets = cachedSets ?: apiService.getSets()
-                .sortedByDescending { it.releaseDate }
-                .also { cachedSets = it }
-            
-            // Normalizziamo il numero cercato (es. "025" -> "25")
-            val normalizedSearchNumber = number.trimStart('0').ifBlank { "0" }
-            
-            // Cerchiamo nei set in parallelo a lotti di 10 per massimizzare la velocità
-            for (batch in sets.chunked(10)) {
-                val deferredResults = batch.map { set ->
-                    async {
-                        try {
-                            val cards = apiService.getCardsBySet(set.id)
-                            // Cerchiamo prima una corrispondenza esatta del nome, poi contenuta
-                            cards.find { card ->
-                                val cardNum = card.number.trimStart('0').ifBlank { "0" }
-                                card.name.equals(name, ignoreCase = true) && cardNum == normalizedSearchNumber
-                            } ?: cards.find { card ->
-                                val cardNum = card.number.trimStart('0').ifBlank { "0" }
-                                card.name.contains(name, ignoreCase = true) && cardNum == normalizedSearchNumber
-                            }
-                        } catch (e: Exception) { null }
-                    }
-                }
-                
-                val match = deferredResults.awaitAll().filterNotNull().firstOrNull()
-                if (match != null) return@coroutineScope match
-            }
-            null
-        } catch (e: Exception) {
-            null
-        }
+    companion object {
+        private const val MAX_CANDIDATES = 6
+        private const val NAME_MIN_SIMILARITY = 0.75
+        private const val NAME_MAX_LENGTH_DIFF = 3
+        private const val NAMES_PER_LINE = 8
     }
 
-    suspend fun saveCardToBinder(cardDto: CardDto, category: CardCategory) {
-        val pokemonCard = PokemonCard(
-            id = cardDto.id,
-            name = cardDto.name,
-            supertype = cardDto.supertype,
-            subtypes = cardDto.subtypes ?: emptyList(),
-            number = cardDto.number,
-            artist = cardDto.artist,
-            rarity = cardDto.rarity,
-            imageUrl = cardDto.images.large,
-            set = cardDto.set.name,
-            category = category
+    val allCards: Flow<List<PokemonCard>> = pokemonDao.getAllCards()
+
+    private var nameIndex: List<String>? = null
+
+    /**
+     * Cerca la carta nel catalogo locale (nessuna rete).
+     * 1) Se è stato letto il numero (es. 025/165): prende solo le carte con quel numero e le ordina per nome.
+     * 2) Altrimenti cerca i nomi più simili in tutto il catalogo.
+     */
+    suspend fun findCandidates(reading: ScanReading): ScanMatch {
+        val nameLines = reading.nameLines.map(CardText::normalizeName).filter { it.length >= 3 }
+
+        val pool: List<CatalogCard>
+        val effectiveReading: ScanReading
+        val number = reading.number
+        val byNumber = if (number != null) catalogDao.byNumberKey(number.key) else emptyList()
+        if (byNumber.isNotEmpty()) {
+            pool = byNumber
+            effectiveReading = reading
+        } else {
+            pool = cardsWithSimilarNames(nameLines)
+            effectiveReading = reading.copy(number = null)
+        }
+        if (pool.isEmpty()) return ScanMatch(emptyList(), false)
+
+        val ranked = CardMatcher.rank(pool, effectiveReading)
+        return ScanMatch(ranked.take(MAX_CANDIDATES), CardMatcher.isConfident(ranked))
+    }
+
+    private suspend fun cardsWithSimilarNames(nameLines: List<String>): List<CatalogCard> {
+        if (nameLines.isEmpty()) return emptyList()
+        val names = withContext(Dispatchers.Default) {
+            val index = nameIndex ?: catalogDao.distinctNames().also { nameIndex = it }
+            nameLines.flatMap { line ->
+                index.asSequence()
+                    .filter { abs(it.length - line.length) <= NAME_MAX_LENGTH_DIFF }
+                    .map { it to CardText.similarity(line, it) }
+                    .filter { it.second >= NAME_MIN_SIMILARITY }
+                    .sortedByDescending { it.second }
+                    .take(NAMES_PER_LINE)
+                    .map { it.first }
+                    .toList()
+            }.distinct()
+        }
+        return if (names.isEmpty()) emptyList() else catalogDao.byNameNorm(names)
+    }
+
+    suspend fun saveCardToBinder(card: CatalogCard, category: CardCategory) {
+        pokemonDao.insertCard(
+            PokemonCard(
+                id = card.binderId,
+                name = card.name,
+                supertype = card.cardType,
+                subtypes = emptyList(),
+                number = card.number,
+                artist = card.artist,
+                rarity = card.rarity,
+                imageUrl = card.imageUrl,
+                set = card.setName,
+                category = category
+            )
         )
-        pokemonDao.insertCard(pokemonCard)
     }
 
     fun getCardsByArtist(artist: String) = pokemonDao.getCardsByArtist(artist)

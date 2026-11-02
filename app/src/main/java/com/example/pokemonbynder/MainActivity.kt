@@ -21,7 +21,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -41,17 +44,23 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.PokemonCard
+import com.example.pokemonbynder.scanner.Candidate
+import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.ui.PokemonViewModel
 import com.example.pokemonbynder.ui.scanner.CardScannerAnalyzer
+import com.example.pokemonbynder.ui.scanner.ScannerGuide
 import com.example.pokemonbynder.ui.theme.PokemonBynderTheme
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val repository = (application as PokemonApplication).repository
+        val app = application as PokemonApplication
+        val repository = app.repository
+        val catalogReady = app.catalogReady
 
         enableEdgeToEdge()
         setContent {
@@ -60,7 +69,7 @@ class MainActivity : ComponentActivity() {
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                            return PokemonViewModel(repository) as T
+                            return PokemonViewModel(repository, catalogReady) as T
                         }
                     }
                 )
@@ -75,14 +84,17 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(viewModel: PokemonViewModel) {
     val cards by viewModel.cards.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
-    val isSearching by viewModel.isSearching.collectAsState()
-    val pendingInfo by viewModel.pendingCardInfo.collectAsState(initial = null)
+    val candidates by viewModel.candidates.collectAsState()
+    val catalogReady by viewModel.isCatalogReady.collectAsState()
     val context = LocalContext.current
 
     var hasCameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasCameraPermission = it }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasCameraPermission = granted
+        if (granted) viewModel.setScanning(true)
+    }
 
     Scaffold(
         topBar = {
@@ -92,7 +104,7 @@ fun MainScreen(viewModel: PokemonViewModel) {
             )
         },
         floatingActionButton = {
-            if (!isScanning && !isSearching && pendingInfo == null) {
+            if (catalogReady && !isScanning && candidates == null) {
                 ExtendedFloatingActionButton(
                     onClick = {
                         if (hasCameraPermission) viewModel.setScanning(true)
@@ -105,7 +117,7 @@ fun MainScreen(viewModel: PokemonViewModel) {
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            if (cards.isEmpty() && !isScanning && !isSearching) {
+            if (cards.isEmpty() && !isScanning) {
                 Text("Binder vuoto. Scansiona una carta!", modifier = Modifier.align(Alignment.Center))
             } else {
                 LazyVerticalGrid(
@@ -120,12 +132,12 @@ fun MainScreen(viewModel: PokemonViewModel) {
 
             if (isScanning) {
                 ScannerOverlay(
-                    onDetected = { name, number -> viewModel.onCardDetected(name, number) },
+                    onReading = { reading -> viewModel.onReading(reading) },
                     onClose = { viewModel.setScanning(false) }
                 )
             }
 
-            if (isSearching) {
+            if (!catalogReady) {
                 Box(
                     modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)),
                     contentAlignment = Alignment.Center
@@ -140,22 +152,21 @@ fun MainScreen(viewModel: PokemonViewModel) {
                         ) {
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.height(16.dp))
-                            Text("Ricerca nel catalogo GitHub...", fontWeight = FontWeight.Bold)
-                            Text("Analisi dei set in corso", style = MaterialTheme.typography.bodySmall)
+                            Text("Preparazione del catalogo carte...", fontWeight = FontWeight.Bold)
+                            Text("Solo al primo avvio, pochi secondi", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
 
-            // Dialog per confermare i dati e scegliere la categoria
-            pendingInfo?.let { (name, number) ->
-                CategorySelectionDialog(
-                    cardName = name,
-                    cardNumber = number,
-                    onConfirm = { category ->
-                        viewModel.confirmAndAddCard(category) { success ->
-                            if (success) Toast.makeText(context, "Aggiunta: $name ($number)", Toast.LENGTH_SHORT).show()
-                            else Toast.makeText(context, "Errore nel caricamento online", Toast.LENGTH_LONG).show()
+            // Dialog per scegliere la carta giusta e la tipologia
+            candidates?.let { list ->
+                CandidateSelectionDialog(
+                    candidates = list,
+                    onConfirm = { card, category ->
+                        viewModel.confirmAndAddCard(card, category) { success ->
+                            if (success) Toast.makeText(context, "Aggiunta: ${card.name} (${card.number})", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Errore nel salvataggio della carta", Toast.LENGTH_LONG).show()
                         }
                     },
                     onDismiss = { viewModel.cancelSelection() }
@@ -166,18 +177,46 @@ fun MainScreen(viewModel: PokemonViewModel) {
 }
 
 @Composable
-fun CategorySelectionDialog(cardName: String, cardNumber: String, onConfirm: (CardCategory) -> Unit, onDismiss: () -> Unit) {
+fun CandidateSelectionDialog(
+    candidates: List<Candidate>,
+    onConfirm: (CatalogCard, CardCategory) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selected by remember(candidates) { mutableStateOf(candidates.first().card) }
     var selectedCategory by remember { mutableStateOf(CardCategory.NORMAL) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Carta rilevata: $cardName") },
+        title = { Text(if (candidates.size > 1) "Quale carta è?" else "Carta rilevata") },
         text = {
-            Column {
-                if (cardNumber.isNotBlank()) {
-                    Text("Numero: $cardNumber", fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                AsyncImage(
+                    model = selected.imageUrl.ifBlank { null },
+                    contentDescription = selected.name,
+                    modifier = Modifier.fillMaxWidth().height(260.dp),
+                    contentScale = ContentScale.Fit
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                candidates.forEach { candidate ->
+                    val card = candidate.card
+                    val total = if (card.setTotal > 0) "/${card.setTotal}" else ""
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable { selected = card }.padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(selected = selected == card, onClick = { selected = card })
+                        Column(modifier = Modifier.padding(start = 8.dp)) {
+                            Text(card.name, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${card.setName} · ${card.number}$total · ${card.lang.uppercase()}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
                 Text("Scegli la tipologia della carta fisica:")
                 Spacer(modifier = Modifier.height(8.dp))
                 CardCategory.entries.forEach { category ->
@@ -191,30 +230,64 @@ fun CategorySelectionDialog(cardName: String, cardNumber: String, onConfirm: (Ca
                 }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selectedCategory) }) { Text("Aggiungi al Binder") } },
+        confirmButton = { Button(onClick = { onConfirm(selected, selectedCategory) }) { Text("Aggiungi al Binder") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
 
+/** Tiene il riferimento a PreviewView per leggerne la dimensione dal thread dell'analizzatore. */
+private class PreviewHolder {
+    @Volatile
+    var view: PreviewView? = null
+}
+
 @Composable
-fun ScannerOverlay(onDetected: (String, String) -> Unit, onClose: () -> Unit) {
+fun ScannerOverlay(onReading: (ScanReading) -> Unit, onClose: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     val context = LocalContext.current
+    val density = LocalDensity.current
+
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val previewHolder = remember { PreviewHolder() }
+    val currentOnReading by rememberUpdatedState(onReading)
+    val guideSizePx = remember(density) {
+        with(density) { ScannerGuide.WIDTH_DP.dp.roundToPx() to ScannerGuide.HEIGHT_DP.dp.roundToPx() }
+    }
+    val analyzer = remember {
+        CardScannerAnalyzer(
+            previewSize = { previewHolder.view?.let { it.width to it.height } ?: (0 to 0) },
+            guideSizePx = guideSizePx,
+            onReading = { reading -> currentOnReading(reading) }
+        )
+    }
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+
+    // Quando il riquadro si chiude, spegne davvero la fotocamera e libera le risorse.
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraProvider?.unbindAll()
+            analyzer.close()
+            cameraExecutor.shutdown()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
                 val previewView = PreviewView(ctx).apply {
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
                 }
+                previewHolder.view = previewView
+
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                 cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
+                    val provider = cameraProviderFuture.get()
+                    cameraProvider = provider
 
-                    val cameraSelector = if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                    val cameraSelector = if (provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
                         CameraSelector.DEFAULT_BACK_CAMERA
-                    } else if (cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                    } else if (provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
                         CameraSelector.DEFAULT_FRONT_CAMERA
                     } else {
                         CameraSelector.DEFAULT_BACK_CAMERA
@@ -224,14 +297,26 @@ fun ScannerOverlay(onDetected: (String, String) -> Unit, onClose: () -> Unit) {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
+                    // Risoluzione più alta del default (640x480): serve per leggere il numero stampato in piccolo.
+                    // Stesso rapporto 4:3 dell'anteprima, così il riquadro guida cade dove previsto.
                     val analysis = ImageAnalysis.Builder()
+                        .setResolutionSelector(
+                            ResolutionSelector.Builder()
+                                .setResolutionStrategy(
+                                    ResolutionStrategy(
+                                        Size(1440, 1080),
+                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                                    )
+                                )
+                                .build()
+                        )
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build().also {
-                            it.setAnalyzer(cameraExecutor, CardScannerAnalyzer { name, number -> onDetected(name, number) })
+                            it.setAnalyzer(cameraExecutor, analyzer)
                         }
                     try {
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analysis)
+                        provider.unbindAll()
+                        provider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analysis)
                     } catch (e: Exception) {
                         Log.e("Scanner", "Error", e)
                         Toast.makeText(context, "Errore fotocamera", Toast.LENGTH_SHORT).show()
@@ -245,7 +330,7 @@ fun ScannerOverlay(onDetected: (String, String) -> Unit, onClose: () -> Unit) {
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
-                    .size(width = 280.dp, height = 390.dp)
+                    .size(width = ScannerGuide.WIDTH_DP.dp, height = ScannerGuide.HEIGHT_DP.dp)
                     .align(Alignment.Center)
                     .border(3.dp, Color.Yellow, RoundedCornerShape(16.dp))
             )
@@ -253,7 +338,7 @@ fun ScannerOverlay(onDetected: (String, String) -> Unit, onClose: () -> Unit) {
                 "POSIZIONA LA CARTA NEL RIQUADRO",
                 color = Color.Yellow,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.Center).padding(top = 440.dp)
+                modifier = Modifier.align(Alignment.Center).padding(top = (ScannerGuide.HEIGHT_DP + 50).dp)
                     .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(8.dp)
             )
         }
@@ -269,7 +354,7 @@ fun CardItem(card: PokemonCard) {
     Card(elevation = CardDefaults.cardElevation(4.dp), shape = RoundedCornerShape(12.dp)) {
         Column {
             AsyncImage(
-                model = card.imageUrl,
+                model = card.imageUrl.ifBlank { null },
                 contentDescription = card.name,
                 modifier = Modifier.fillMaxWidth().height(220.dp),
                 contentScale = ContentScale.Fit
