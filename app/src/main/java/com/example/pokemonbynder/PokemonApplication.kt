@@ -27,6 +27,11 @@ class PokemonApplication : Application() {
     /** Diventa true quando il catalogo offline è pronto (al primo avvio richiede pochi secondi). */
     val catalogReady: StateFlow<Boolean> = _catalogReady.asStateFlow()
 
+    private val _catalogError = MutableStateFlow<String?>(null)
+
+    /** Messaggio d'errore se l'importazione del catalogo fallisce (null se tutto bene). */
+    val catalogError: StateFlow<String?> = _catalogError.asStateFlow()
+
     override fun onCreate() {
         super.onCreate()
 
@@ -50,6 +55,7 @@ class PokemonApplication : Application() {
                 _catalogReady.value = true
             } catch (e: Exception) {
                 Log.e("PokemonApplication", "Importazione del catalogo non riuscita", e)
+                _catalogError.value = "${e.javaClass.simpleName}: ${e.message}"
             }
         }
     }

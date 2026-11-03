@@ -53,6 +53,7 @@ import com.example.pokemonbynder.ui.PokemonViewModel
 import com.example.pokemonbynder.ui.scanner.CardScannerAnalyzer
 import com.example.pokemonbynder.ui.scanner.ScannerGuide
 import com.example.pokemonbynder.ui.theme.PokemonBynderTheme
+import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -73,7 +74,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
-                MainScreen(viewModel)
+                MainScreen(viewModel, app.catalogError)
             }
         }
     }
@@ -81,7 +82,8 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: PokemonViewModel) {
+fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
+    val importError by catalogError.collectAsState()
     val cards by viewModel.cards.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val candidates by viewModel.candidates.collectAsState()
@@ -150,10 +152,17 @@ fun MainScreen(viewModel: PokemonViewModel) {
                             modifier = Modifier.padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            CircularProgressIndicator()
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text("Preparazione del catalogo carte...", fontWeight = FontWeight.Bold)
-                            Text("Solo al primo avvio, pochi secondi", style = MaterialTheme.typography.bodySmall)
+                            val error = importError
+                            if (error == null) {
+                                CircularProgressIndicator()
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text("Preparazione del catalogo carte...", fontWeight = FontWeight.Bold)
+                                Text("Solo al primo avvio, pochi secondi", style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Text("Impossibile caricare il catalogo carte", fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(error, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
