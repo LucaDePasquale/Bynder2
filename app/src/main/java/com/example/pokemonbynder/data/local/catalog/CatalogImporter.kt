@@ -36,31 +36,36 @@ class CatalogImporter(
         if (prefs.getInt(KEY_VERSION, 0) == CATALOG_VERSION && dao.count() > 0) return@withContext
 
         var imported = 0
-        database.withTransaction {
-            dao.clear()
-            context.assets.open(ASSET_NAME).use { raw ->
-                BufferedReader(InputStreamReader(GZIPInputStream(raw), Charsets.UTF_8)).use { reader ->
-                    reader.readLine() // intestazione
-                    val batch = ArrayList<CatalogCard>(BATCH_SIZE)
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        val card = parse(line) ?: continue
-                        batch.add(card)
-                        if (batch.size == BATCH_SIZE) {
+        try {
+            database.withTransaction {
+                dao.clear()
+                context.assets.open(ASSET_NAME).use { raw ->
+                    BufferedReader(InputStreamReader(GZIPInputStream(raw), Charsets.UTF_8)).use { reader ->
+                        reader.readLine() // intestazione
+                        val batch = ArrayList<CatalogCard>(BATCH_SIZE)
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            val card = parse(line) ?: continue
+                            batch.add(card)
+                            if (batch.size == BATCH_SIZE) {
+                                dao.insertAll(batch)
+                                imported += batch.size
+                                batch.clear()
+                            }
+                        }
+                        if (batch.isNotEmpty()) {
                             dao.insertAll(batch)
                             imported += batch.size
-                            batch.clear()
                         }
-                    }
-                    if (batch.isNotEmpty()) {
-                        dao.insertAll(batch)
-                        imported += batch.size
                     }
                 }
             }
+            prefs.edit().putInt(KEY_VERSION, CATALOG_VERSION).apply()
+            Log.d("CatalogImporter", "Carte importate: $imported")
+        } catch (e: Exception) {
+            Log.e("CatalogImporter", "Errore durante l'importazione del catalogo", e)
+            throw e
         }
-        prefs.edit().putInt(KEY_VERSION, CATALOG_VERSION).apply()
-        Log.d("CatalogImporter", "Carte importate: $imported")
     }
 
     // lang, set_code, set_name, number, set_total, name, rarity, artist, card_type, img

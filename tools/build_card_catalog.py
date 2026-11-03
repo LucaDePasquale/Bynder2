@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Converte il database https://github.com/type-null/PTCG-database in un unico file
-compatto (TSV compresso) da includere negli assets dell'app.
+compatto (TSV compresso GZIP) da includere negli assets dell'app.
 
 Uso (da eseguire UNA volta sul PC, non serve internet dopo aver scaricato il database):
 
@@ -9,9 +9,6 @@ Uso (da eseguire UNA volta sul PC, non serve internet dopo aver scaricato il dat
     python3 tools/build_card_catalog.py --db PTCG-database --langs it en
 
 Output: app/src/main/assets/catalog.tsv.gz
-
-Colonne (separate da TAB, una carta per riga, prima riga = intestazione):
-    lang  set_code  set_name  number  set_total  name  rarity  artist  card_type  img
 """
 import argparse
 import gzip
@@ -50,7 +47,7 @@ def main() -> int:
         root = os.path.join(args.db, f"data_{lang}")
         if not os.path.isdir(root):
             print(f"Cartella non trovata: {root}", file=sys.stderr)
-            return 1
+            continue
         for dirpath, _dirs, files in os.walk(root):
             for filename in sorted(files):
                 if not filename.endswith(".json"):
@@ -90,8 +87,14 @@ def main() -> int:
                     clean(card.get("img")),
                 ])
 
+    if not rows:
+        print("Errore: nessuna carta trovata. Controlla il percorso del database.", file=sys.stderr)
+        return 1
+
     rows.sort(key=lambda r: (r[0], r[1], r[3]))
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+
+    # Scrittura forzata in formato GZIP
     with gzip.open(args.out, "wt", encoding="utf-8", newline="\n", compresslevel=9) as out:
         out.write("\t".join(COLUMNS) + "\n")
         for row in rows:
