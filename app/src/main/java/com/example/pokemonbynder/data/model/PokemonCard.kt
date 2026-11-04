@@ -14,14 +14,26 @@ data class PokemonCard(
     val rarity: String?,
     val imageUrl: String,
     val set: String,
-    val category: CardCategory // Normale, Reverse, AR, SAR, Full Art
+    val category: CardCategory // Tipologia della carta fisica, modificabile dopo l'aggiunta
 )
 
-enum class CardCategory {
-    NORMAL,
-    REVERSE,
-    AR,
-    SAR,
-    FULL_ART,
-    OTHER
+/**
+ * Tipologia della carta fisica. Nel database si salva il NOME di ogni voce (es. "V_ASTRO"):
+ * non rinominare né eliminare voci già esistenti, altrimenti le carte salvate perdono la tipologia.
+ * Per aggiungerne una nuova basta inserire una riga qui: compare da sola in aggiunta e in modifica.
+ */
+enum class CardCategory(val label: String) {
+    NORMAL("Normale"),
+    EX("EX"),
+    TAG_TEAM("Tag Team"),
+    V("V"),
+    V_ASTRO("V ASTRO"),
+    VMAX("VMAX"),
+    HOLO("Holo"),
+    FULL_ART("Full Art"),
+    LEGGENDE("Leggende"),
+    REVERSE("Reverse"),
+    AR("AR"),
+    SAR("SAR"),
+    OTHER("Altro")
 }

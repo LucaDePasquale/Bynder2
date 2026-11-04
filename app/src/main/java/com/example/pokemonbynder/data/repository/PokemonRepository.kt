@@ -92,5 +92,9 @@ class PokemonRepository(
         )
     }
 
+    suspend fun updateCategory(cardId: String, category: CardCategory) {
+        pokemonDao.updateCategory(cardId, category)
+    }
+
     fun getCardsByArtist(artist: String) = pokemonDao.getCardsByArtist(artist)
 }

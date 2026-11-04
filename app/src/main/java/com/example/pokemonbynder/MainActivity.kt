@@ -89,6 +89,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     val candidates by viewModel.candidates.collectAsState()
     val catalogReady by viewModel.isCatalogReady.collectAsState()
     val context = LocalContext.current
+    var cardToEdit by remember { mutableStateOf<PokemonCard?>(null) }
 
     var hasCameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
@@ -128,7 +129,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(cards) { card -> CardItem(card) }
+                    items(cards, key = { it.id }) { card -> CardItem(card, onClick = { cardToEdit = card }) }
                 }
             }
 
@@ -181,6 +182,21 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     onDismiss = { viewModel.cancelSelection() }
                 )
             }
+
+            // Dialog per cambiare la tipologia di una carta già nel binder
+            cardToEdit?.let { card ->
+                EditCategoryDialog(
+                    card = card,
+                    onConfirm = { category ->
+                        viewModel.updateCardCategory(card, category) { success ->
+                            if (success) Toast.makeText(context, "Tipologia aggiornata: ${category.label}", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Errore nel salvataggio", Toast.LENGTH_LONG).show()
+                        }
+                        cardToEdit = null
+                    },
+                    onDismiss = { cardToEdit = null }
+                )
+            }
         }
     }
 }
@@ -228,20 +244,54 @@ fun CandidateSelectionDialog(
                 Spacer(modifier = Modifier.height(16.dp))
                 Text("Scegli la tipologia della carta fisica:")
                 Spacer(modifier = Modifier.height(8.dp))
-                CardCategory.entries.forEach { category ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable { selectedCategory = category }.padding(8.dp)
-                    ) {
-                        RadioButton(selected = selectedCategory == category, onClick = { selectedCategory = category })
-                        Text(category.name, modifier = Modifier.padding(start = 8.dp))
-                    }
-                }
+                CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
             }
         },
         confirmButton = { Button(onClick = { onConfirm(selected, selectedCategory) }) { Text("Aggiungi al Binder") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
+}
+
+/** Cambia la tipologia di una carta già presente nel binder. */
+@Composable
+fun EditCategoryDialog(
+    card: PokemonCard,
+    onConfirm: (CardCategory) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedCategory by remember(card.id) { mutableStateOf(card.category) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Modifica tipologia") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(card.name, fontWeight = FontWeight.Bold)
+                Text("${card.set} · ${card.number}", style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(12.dp))
+                CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
+            }
+        },
+        confirmButton = { Button(onClick = { onConfirm(selectedCategory) }) { Text("Salva") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+    )
+}
+
+/** Elenco di tutte le tipologie, usato sia in aggiunta sia in modifica. */
+@Composable
+fun CategoryPicker(selected: CardCategory, onSelect: (CardCategory) -> Unit) {
+    CardCategory.entries.forEach { category ->
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect(category) }
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+        ) {
+            RadioButton(selected = selected == category, onClick = { onSelect(category) })
+            Text(category.label, modifier = Modifier.padding(start = 8.dp))
+        }
+    }
 }
 
 /** Tiene il riferimento a PreviewView per leggerne la dimensione dal thread dell'analizzatore. */
@@ -359,8 +409,12 @@ fun ScannerOverlay(onReading: (ScanReading) -> Unit, onClose: () -> Unit) {
 }
 
 @Composable
-fun CardItem(card: PokemonCard) {
-    Card(elevation = CardDefaults.cardElevation(4.dp), shape = RoundedCornerShape(12.dp)) {
+fun CardItem(card: PokemonCard, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.clickable(onClick = onClick),
+        elevation = CardDefaults.cardElevation(4.dp),
+        shape = RoundedCornerShape(12.dp)
+    ) {
         Column {
             AsyncImage(
                 model = card.imageUrl.ifBlank { null },
@@ -371,7 +425,7 @@ fun CardItem(card: PokemonCard) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(card.name, fontWeight = FontWeight.Bold)
                 Text("Art: ${card.artist ?: "N/D"}", style = MaterialTheme.typography.bodySmall)
-                SuggestionChip(onClick = {}, label = { Text(card.category.name) })
+                SuggestionChip(onClick = onClick, label = { Text(card.category.label) })
             }
         }
     }

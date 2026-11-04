@@ -98,6 +98,18 @@ class PokemonViewModel(
         }
     }
 
+    /** Cambia la tipologia di una carta già nel binder. */
+    fun updateCardCategory(card: PokemonCard, category: CardCategory, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.updateCategory(card.id, category)
+                onResult(true)
+            } catch (e: Exception) {
+                onResult(false)
+            }
+        }
+    }
+
     fun cancelSelection() {
         _candidates.value = null
     }

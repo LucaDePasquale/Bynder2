@@ -16,6 +16,9 @@ interface PokemonDao {
     @Query("SELECT * FROM pokemon_cards WHERE category = :category")
     fun getCardsByCategory(category: CardCategory): Flow<List<PokemonCard>>
 
+    @Query("UPDATE pokemon_cards SET category = :category WHERE id = :id")
+    suspend fun updateCategory(id: String, category: CardCategory)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCard(card: PokemonCard)
 

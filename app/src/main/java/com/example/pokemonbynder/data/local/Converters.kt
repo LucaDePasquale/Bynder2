@@ -24,6 +24,7 @@ class Converters {
 
     @TypeConverter
     fun toCategory(value: String): CardCategory {
-        return CardCategory.valueOf(value)
+        // Un nome sconosciuto non deve far chiudere l'app: la carta resta nel binder come "Altro".
+        return CardCategory.entries.firstOrNull { it.name == value } ?: CardCategory.OTHER
     }
 }
