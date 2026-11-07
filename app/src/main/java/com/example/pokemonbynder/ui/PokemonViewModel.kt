@@ -7,8 +7,11 @@ import androidx.lifecycle.viewModelScope
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
+import com.example.pokemonbynder.data.model.CardCondition
 import com.example.pokemonbynder.data.model.PokemonCard
+import com.example.pokemonbynder.data.model.WishlistCard
 import com.example.pokemonbynder.data.repository.PokemonRepository
+import com.example.pokemonbynder.data.repository.toPriceRequest
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
@@ -76,9 +79,9 @@ class PokemonViewModel(
     /** Tipologia usata come filtro; null = tutte. */
     val filterCategory: StateFlow<CardCategory?> = _filterCategory.asStateFlow()
 
-    /** Quante carte contiene ogni binder (a prescindere dai filtri). */
+    /** Quante copie contiene ogni binder (a prescindere dai filtri). */
     val cardCounts: StateFlow<Map<Long, Int>> = repository.allCards
-        .map { list -> list.groupingBy { it.binderId }.eachCount() }
+        .map { list -> list.groupBy { it.binderId }.mapValues { (_, group) -> group.sumOf { it.quantity } } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     /** Testo cercato nel binder (nome, set o numero); vuoto = nessuna ricerca. */
@@ -200,32 +203,50 @@ class PokemonViewModel(
         }
     }
 
-    fun confirmAndAddCard(card: CatalogCard, category: CardCategory, binderId: Long, onResult: (Boolean) -> Unit) {
+    /** [onResult] riceve l'esito e quante copie della carta ci sono ora nel binder. */
+    fun confirmAndAddCard(
+        card: CatalogCard,
+        category: CardCategory,
+        binderId: Long,
+        condition: CardCondition,
+        onResult: (Boolean, Int) -> Unit
+    ) {
         viewModelScope.launch {
             try {
-                repository.saveCardToBinder(card, category, binderId)
+                val quantity = repository.saveCardToBinder(card, category, binderId, condition)
                 _candidates.value = null
                 val reopenCamera = _continuousScan.value && !addingManually
                 addingManually = false
-                onResult(true)
+                onResult(true, quantity)
                 // Scansione continua: dopo una breve pausa (il tempo di cambiare carta) si riapre la fotocamera
                 if (reopenCamera) {
                     delay(REOPEN_CAMERA_DELAY_MS)
                     if (!_isScanning.value && _candidates.value == null) setScanning(true)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("PokemonViewModel", "Salvataggio della carta non riuscito", e)
-                onResult(false)
+                onResult(false, 0)
             }
         }
     }
 
-    /** Cambia tipologia e/o binder di una carta già salvata. */
-    fun updateCard(card: PokemonCard, category: CardCategory, binderId: Long, onResult: (Boolean) -> Unit) {
+    /** Cambia tipologia, quantità, condizione e/o binder di una carta già salvata. */
+    fun updateCard(
+        card: PokemonCard,
+        category: CardCategory,
+        binderId: Long,
+        quantity: Int,
+        condition: CardCondition,
+        onResult: (Boolean) -> Unit
+    ) {
         viewModelScope.launch {
             try {
-                repository.updateCard(card, category, binderId)
+                repository.updateCard(card, category, binderId, quantity, condition)
                 onResult(true)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("PokemonViewModel", "Modifica della carta non riuscita", e)
                 onResult(false)
@@ -325,6 +346,116 @@ class PokemonViewModel(
         addingManually = true
         _isScanning.value = false
         _candidates.value = listOf(Candidate(card, 1.0))
+    }
+
+    /** Toglie più carte insieme dai binder. */
+    fun deleteCards(cards: List<PokemonCard>, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.deleteCards(cards.map { it.id })
+                onResult(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Eliminazione delle carte non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
+    /** Carte desiderate, dalla più recente. */
+    val wishlist: StateFlow<List<WishlistCard>> = repository.wishlist
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Ultimo prezzo noto (euro) per id del catalogo. */
+    val prices: StateFlow<Map<String, Double>> = repository.prices
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    /** Avanzamento dell'aggiornamento prezzi (fatte, totali); null se non è in corso. */
+    private val _priceProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val priceProgress: StateFlow<Pair<Int, Int>?> = _priceProgress.asStateFlow()
+
+    private val isRefreshingPrices = AtomicBoolean(false)
+
+    /** [onResult] riceve quanti prezzi sono stati trovati e quante carte diverse sono state controllate; null se rete assente. */
+    fun refreshBinderPrices(cards: List<PokemonCard>, onResult: (found: Int?, checked: Int) -> Unit) =
+        refreshPrices(cards.map { it.toPriceRequest() }, onResult)
+
+    fun refreshWishlistPrices(cards: List<WishlistCard>, onResult: (found: Int?, checked: Int) -> Unit) =
+        refreshPrices(cards.map { it.toPriceRequest() }, onResult)
+
+    private fun refreshPrices(
+        requests: List<com.example.pokemonbynder.data.remote.PriceRequest>,
+        onResult: (found: Int?, checked: Int) -> Unit
+    ) {
+        val checked = requests.distinctBy { it.key }.size
+        if (checked == 0 || !isRefreshingPrices.compareAndSet(false, true)) return
+        _priceProgress.value = 0 to checked
+        viewModelScope.launch {
+            try {
+                val found = repository.refreshPrices(requests) { done, total ->
+                    _priceProgress.value = done to total
+                }
+                onResult(found, checked)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Aggiornamento dei prezzi non riuscito", e)
+                onResult(null, checked)
+            } finally {
+                _priceProgress.value = null
+                isRefreshingPrices.set(false)
+            }
+        }
+    }
+
+    /** [onResult]: true = aggiunta, false = c'era già, null = errore. */
+    fun addToWishlist(card: CatalogCard, onResult: (Boolean?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(repository.addToWishlist(card))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Aggiunta alla wishlist non riuscita", e)
+                onResult(null)
+            }
+        }
+    }
+
+    fun removeFromWishlist(card: WishlistCard, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.removeFromWishlist(card)
+                onResult(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Rimozione dalla wishlist non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
+    /** Carta trovata: dalla wishlist al binder. */
+    fun moveWishlistToBinder(
+        wish: WishlistCard,
+        category: CardCategory,
+        binderId: Long,
+        condition: CardCondition,
+        onResult: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.moveWishlistToBinder(wish, category, binderId, condition)
+                onResult(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Spostamento dalla wishlist non riuscito", e)
+                onResult(false)
+            }
+        }
     }
 
     fun setFilterCategory(category: CardCategory?) {

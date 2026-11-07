@@ -25,3 +25,23 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         )
     }
 }
+
+/**
+ * Versione 2 -> 3: quantità e condizione delle carte, wishlist e prezzi.
+ * Le carte già salvate restano come sono: una copia ciascuna, in condizione Near Mint.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `pokemon_cards` ADD COLUMN `quantity` INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE `pokemon_cards` ADD COLUMN `condition` TEXT NOT NULL DEFAULT 'NEAR_MINT'")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `wishlist_cards` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                "`supertype` TEXT NOT NULL, `number` TEXT NOT NULL, `artist` TEXT, `rarity` TEXT, " +
+                "`imageUrl` TEXT NOT NULL, `set` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `card_prices` (`catalogKey` TEXT NOT NULL, `priceEur` REAL NOT NULL, " +
+                "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`catalogKey`))"
+        )
+    }
+}

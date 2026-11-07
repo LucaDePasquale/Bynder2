@@ -20,6 +20,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Esito di una ricerca su TCGdex.
@@ -27,6 +28,16 @@ import java.util.concurrent.ConcurrentHashMap
  *        false se nessuna lo aveva (numero letto male): in quel caso il numero va ignorato.
  */
 data class TcgdexSearch(val cards: List<CatalogCard>, val numberMatched: Boolean)
+
+/** Una carta di cui si vuole conoscere il prezzo. [key] è l'id della carta nel catalogo (lingua:set:numero). */
+data class PriceRequest(
+    val key: String,
+    val lang: String,
+    val name: String,
+    val number: String,
+    val setName: String,
+    val imageUrl: String
+)
 
 /**
  * Cerca le carte su TCGdex (https://tcgdex.dev): API gratuita, senza chiave.
@@ -55,6 +66,7 @@ class TcgdexClient {
         const val MAX_CACHE_ENTRIES = 300
         const val PREFIX_FALLBACK_LENGTH = 4
         val wordPattern = Regex("""[\p{L}'’\-]{3,}""")
+        val imageIdPattern = Regex("""^https://assets\.tcgdex\.net/[^/]+/[^/]+/([^/]+)/([^/]+)/""")
     }
 
     private data class Brief(val id: String, val localId: String, val name: String, val image: String)
@@ -88,6 +100,81 @@ class TcgdexClient {
             return@withContext TcgdexSearch(fetchCards(lang, chosen), numberMatched)
         }
         TcgdexSearch(emptyList(), false)
+    }
+
+    /**
+     * Cerca il prezzo (euro, tendenza Cardmarket) di ogni carta. Chiama [onPrice] per ogni carta
+     * (con null se il prezzo non è stato trovato) e restituisce quante carte hanno ricevuto un prezzo.
+     * Lancia [IOException] solo se la rete non ha risposto a nessuna richiesta.
+     */
+    suspend fun fetchPrices(
+        requests: List<PriceRequest>,
+        onPrice: suspend (PriceRequest, Double?) -> Unit
+    ): Int = withContext(Dispatchers.IO) {
+        val gate = Semaphore(MAX_PARALLEL_REQUESTS)
+        val networkFailures = AtomicInteger(0)
+        val found = AtomicInteger(0)
+        coroutineScope {
+            requests.map { request ->
+                async {
+                    gate.withPermit {
+                        val price = try {
+                            priceOf(request)
+                        } catch (e: IOException) {
+                            Log.w(TAG, "Prezzo non disponibile per ${request.key}", e)
+                            networkFailures.incrementAndGet()
+                            null
+                        } catch (e: JSONException) {
+                            Log.w(TAG, "Risposta non valida per ${request.key}", e)
+                            null
+                        }
+                        if (price != null) found.incrementAndGet()
+                        onPrice(request, price)
+                    }
+                }
+            }.awaitAll()
+        }
+        if (requests.isNotEmpty() && networkFailures.get() == requests.size) {
+            throw IOException("TCGdex non raggiungibile")
+        }
+        found.get()
+    }
+
+    private fun priceOf(request: PriceRequest): Double? {
+        val id = idFromImage(request.imageUrl) ?: findId(request) ?: return null
+        val body = try {
+            get("$BASE_URL/${request.lang}/cards/${encode(id)}")
+        } catch (e: FileNotFoundException) {
+            return null
+        }
+        val cardmarket = JSONObject(body).optJSONObject("pricing")?.optJSONObject("cardmarket") ?: return null
+        for (field in listOf("trend", "avg", "low")) {
+            val value = cardmarket.optDouble(field, Double.NaN)
+            if (!value.isNaN() && value > 0.0) return value
+        }
+        return null
+    }
+
+    /** Le immagini di TCGdex contengono l'id della carta: ".../it/sv/sv07/142/high.webp" -> "sv07-142". */
+    private fun idFromImage(imageUrl: String): String? =
+        imageIdPattern.find(imageUrl)?.let { "${it.groupValues[1]}-${it.groupValues[2]}" }
+
+    /** Per le carte senza id TCGdex (catalogo PTCG): si cerca per nome e numero e si sceglie in base al set. */
+    private fun findId(request: PriceRequest): String? {
+        val word = searchWord(request.name) ?: return null
+        val numberKey = CardText.normalizeNumber(request.number)
+        val sameNumber = search(request.lang, word).filter { CardText.normalizeNumber(it.localId) == numberKey }
+        if (sameNumber.isEmpty()) return null
+        if (sameNumber.size == 1) return sameNumber.first().id
+
+        val wantedSet = CardText.normalizeName(request.setName)
+        if (wantedSet.isEmpty()) return null
+        return sameNumber.take(MAX_DETAILS_NAME_ONLY)
+            .firstOrNull { brief ->
+                val details = cardCache["${request.lang}:${brief.id}"] ?: loadDetails(request.lang, brief)
+                details != null && CardText.normalizeName(details.setName) == wantedSet
+            }
+            ?.id
     }
 
     /** La parola più lunga del nome letto ("Charizard ex" -> "Charizard"), usata per la ricerca. */

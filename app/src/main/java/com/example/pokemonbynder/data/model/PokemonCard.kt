@@ -16,7 +16,9 @@ data class PokemonCard(
     val imageUrl: String,
     val set: String,
     val category: CardCategory, // Tipologia della carta fisica, modificabile dopo l'aggiunta
-    @ColumnInfo(defaultValue = "1") val binderId: Long = DEFAULT_BINDER_ID // Binder che contiene la carta
+    @ColumnInfo(defaultValue = "1") val binderId: Long = DEFAULT_BINDER_ID, // Binder che contiene la carta
+    @ColumnInfo(defaultValue = "1") val quantity: Int = 1, // Quante copie si hanno
+    val condition: CardCondition = CardCondition.NEAR_MINT // Stato di conservazione
 )
 
 /**
@@ -38,4 +40,18 @@ enum class CardCategory(val label: String) {
     AR("AR"),
     SAR("SAR"),
     OTHER("Altro")
+}
+
+/**
+ * Stato di conservazione della carta fisica. Nel database si salva il NOME di ogni voce:
+ * non rinominare né eliminare voci già esistenti.
+ */
+enum class CardCondition(val label: String, val short: String) {
+    MINT("Mint", "M"),
+    NEAR_MINT("Near Mint", "NM"),
+    EXCELLENT("Excellent", "EX"),
+    GOOD("Good", "GD"),
+    LIGHT_PLAYED("Light Played", "LP"),
+    PLAYED("Played", "PL"),
+    POOR("Poor", "P")
 }

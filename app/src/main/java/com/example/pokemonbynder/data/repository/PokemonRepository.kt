@@ -2,14 +2,20 @@ package com.example.pokemonbynder.data.repository
 
 import com.example.pokemonbynder.data.local.BinderDao
 import com.example.pokemonbynder.data.local.PokemonDao
+import com.example.pokemonbynder.data.local.PriceDao
+import com.example.pokemonbynder.data.local.WishlistDao
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.local.catalog.CatalogDao
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
+import com.example.pokemonbynder.data.model.CardCondition
+import com.example.pokemonbynder.data.model.CardPrice
 import com.example.pokemonbynder.data.model.CardEntryId
 import com.example.pokemonbynder.data.model.DEFAULT_BINDER_ID
 import com.example.pokemonbynder.data.model.DEFAULT_BINDER_NAME
 import com.example.pokemonbynder.data.model.PokemonCard
+import com.example.pokemonbynder.data.model.WishlistCard
+import com.example.pokemonbynder.data.remote.PriceRequest
 import com.example.pokemonbynder.data.remote.TcgdexClient
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.CardMatcher
@@ -18,7 +24,9 @@ import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 
 /** Esito di una ricerca: candidati in ordine di probabilità e se il primo è abbastanza sicuro. */
@@ -28,6 +36,8 @@ class PokemonRepository(
     private val pokemonDao: PokemonDao,
     private val catalogDao: CatalogDao,
     private val binderDao: BinderDao,
+    private val wishlistDao: WishlistDao,
+    private val priceDao: PriceDao,
     private val tcgdex: TcgdexClient = TcgdexClient()
 ) {
     companion object {
@@ -40,6 +50,10 @@ class PokemonRepository(
 
     val allCards: Flow<List<PokemonCard>> = pokemonDao.getAllCards()
     val binders: Flow<List<Binder>> = binderDao.getAll()
+    val wishlist: Flow<List<WishlistCard>> = wishlistDao.getAll()
+
+    /** Ultimo prezzo noto in euro di ogni carta, per id del catalogo. */
+    val prices: Flow<Map<String, Double>> = priceDao.getAll().map { list -> list.associate { it.catalogKey to it.priceEur } }
 
     private var nameIndex: List<String>? = null
 
@@ -106,42 +120,139 @@ class PokemonRepository(
         return if (names.isEmpty()) emptyList() else catalogDao.byNameNorm(names)
     }
 
-    suspend fun saveCardToBinder(card: CatalogCard, category: CardCategory, binderId: Long) {
-        pokemonDao.insertCard(
-            PokemonCard(
-                id = CardEntryId.of(binderId, card.catalogKey),
-                name = card.name,
-                supertype = card.cardType,
-                subtypes = emptyList(),
-                number = card.number,
-                artist = card.artist,
-                rarity = card.rarity,
-                imageUrl = card.imageUrl,
-                set = card.setName,
-                category = category,
-                binderId = binderId
-            )
+    /**
+     * Aggiunge una carta al binder e restituisce quante copie ce ne sono ora.
+     * Se la carta c'è già nello stesso binder non si crea un doppione: si aggiunge una copia.
+     */
+    suspend fun saveCardToBinder(
+        card: CatalogCard,
+        category: CardCategory,
+        binderId: Long,
+        condition: CardCondition = CardCondition.NEAR_MINT
+    ): Int = addEntry(
+        PokemonCard(
+            id = CardEntryId.of(binderId, card.catalogKey),
+            name = card.name,
+            supertype = card.cardType,
+            subtypes = emptyList(),
+            number = card.number,
+            artist = card.artist,
+            rarity = card.rarity,
+            imageUrl = card.imageUrl,
+            set = card.setName,
+            category = category,
+            binderId = binderId,
+            condition = condition
         )
+    )
+
+    private suspend fun addEntry(entry: PokemonCard): Int {
+        val existing = pokemonDao.getById(entry.id)
+        val quantity = (existing?.quantity ?: 0) + 1
+        if (existing != null) {
+            pokemonDao.updateDetails(existing.id, existing.category, quantity, existing.condition)
+        } else {
+            pokemonDao.insertCard(entry.copy(quantity = 1))
+        }
+        // Una carta che ora si possiede non è più "da trovare"
+        wishlistDao.deleteById(CardEntryId.catalogKeyOf(entry.id))
+        return quantity
     }
 
     /**
-     * Cambia tipologia e/o binder di una carta già salvata.
+     * Cambia tipologia, quantità, condizione e/o binder di una carta già salvata.
      * Per spostarla si crea la riga nel nuovo binder e poi si toglie la vecchia: se nel nuovo binder
-     * la stessa carta c'è già, viene aggiornata e non duplicata.
+     * la stessa carta c'è già, le copie si sommano e non si crea un doppione.
      */
-    suspend fun updateCard(card: PokemonCard, category: CardCategory, binderId: Long) {
+    suspend fun updateCard(
+        card: PokemonCard,
+        category: CardCategory,
+        binderId: Long,
+        quantity: Int,
+        condition: CardCondition
+    ) {
+        val copies = quantity.coerceAtLeast(1)
         if (binderId == card.binderId) {
-            pokemonDao.updateCategory(card.id, category)
+            pokemonDao.updateDetails(card.id, category, copies, condition)
             return
         }
         val newId = CardEntryId.of(binderId, CardEntryId.catalogKeyOf(card.id))
-        pokemonDao.insertCard(card.copy(id = newId, binderId = binderId, category = category))
+        val existing = pokemonDao.getById(newId)
+        pokemonDao.insertCard(
+            card.copy(
+                id = newId,
+                binderId = binderId,
+                category = category,
+                quantity = copies + (existing?.quantity ?: 0),
+                condition = condition
+            )
+        )
         pokemonDao.deleteById(card.id)
     }
 
     /** Toglie una singola carta dal suo binder. */
     suspend fun deleteCard(card: PokemonCard) {
         pokemonDao.deleteById(card.id)
+    }
+
+    /** Toglie più carte insieme dai binder. */
+    suspend fun deleteCards(ids: List<String>) {
+        if (ids.isNotEmpty()) pokemonDao.deleteByIds(ids)
+    }
+
+    /** Mette la carta nella wishlist; false se c'era già. */
+    suspend fun addToWishlist(card: CatalogCard): Boolean =
+        wishlistDao.insert(
+            WishlistCard(
+                id = card.catalogKey,
+                name = card.name,
+                supertype = card.cardType,
+                number = card.number,
+                artist = card.artist,
+                rarity = card.rarity,
+                imageUrl = card.imageUrl,
+                set = card.setName
+            )
+        ) != -1L
+
+    suspend fun removeFromWishlist(card: WishlistCard) {
+        wishlistDao.deleteById(card.id)
+    }
+
+    /** Carta trovata: passa dalla wishlist al binder (addEntry la toglie dalla wishlist). */
+    suspend fun moveWishlistToBinder(
+        wish: WishlistCard,
+        category: CardCategory,
+        binderId: Long,
+        condition: CardCondition
+    ): Int = addEntry(
+        PokemonCard(
+            id = CardEntryId.of(binderId, wish.id),
+            name = wish.name,
+            supertype = wish.supertype,
+            subtypes = emptyList(),
+            number = wish.number,
+            artist = wish.artist,
+            rarity = wish.rarity,
+            imageUrl = wish.imageUrl,
+            set = wish.set,
+            category = category,
+            binderId = binderId,
+            condition = condition
+        )
+    )
+
+    /**
+     * Scarica da TCGdex i prezzi delle carte indicate (una richiesta per carta diversa) e li salva.
+     * Restituisce quanti prezzi sono stati trovati. Lancia IOException se la rete non funziona.
+     */
+    suspend fun refreshPrices(requests: List<PriceRequest>, onProgress: (done: Int, total: Int) -> Unit): Int {
+        val unique = requests.distinctBy { it.key }
+        val done = AtomicInteger(0)
+        return tcgdex.fetchPrices(unique) { request, price ->
+            if (price != null) priceDao.upsert(CardPrice(request.key, price, System.currentTimeMillis()))
+            onProgress(done.incrementAndGet(), unique.size)
+        }
     }
 
     /** Ricerca manuale nel catalogo offline (per quando la scansione non riconosce la carta). */
@@ -173,3 +284,12 @@ class PokemonRepository(
 
     fun getCardsByArtist(artist: String) = pokemonDao.getCardsByArtist(artist)
 }
+
+/** Dati per cercare il prezzo di una carta del binder. */
+fun PokemonCard.toPriceRequest(): PriceRequest {
+    val key = CardEntryId.catalogKeyOf(id)
+    return PriceRequest(key, key.substringBefore(':'), name, number, set, imageUrl)
+}
+
+/** Dati per cercare il prezzo di una carta della wishlist. */
+fun WishlistCard.toPriceRequest() = PriceRequest(id, id.substringBefore(':'), name, number, set, imageUrl)

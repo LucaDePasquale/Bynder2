@@ -2,6 +2,7 @@ package com.example.pokemonbynder.data.local
 
 import androidx.room.*
 import com.example.pokemonbynder.data.model.CardCategory
+import com.example.pokemonbynder.data.model.CardCondition
 import com.example.pokemonbynder.data.model.PokemonCard
 import kotlinx.coroutines.flow.Flow
 
@@ -16,6 +17,15 @@ interface PokemonDao {
 
     @Query("SELECT * FROM pokemon_cards WHERE category = :category")
     fun getCardsByCategory(category: CardCategory): Flow<List<PokemonCard>>
+
+    @Query("SELECT * FROM pokemon_cards WHERE id = :id")
+    suspend fun getById(id: String): PokemonCard?
+
+    @Query("UPDATE pokemon_cards SET category = :category, quantity = :quantity, condition = :condition WHERE id = :id")
+    suspend fun updateDetails(id: String, category: CardCategory, quantity: Int, condition: CardCondition)
+
+    @Query("DELETE FROM pokemon_cards WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
 
     @Query("UPDATE pokemon_cards SET category = :category WHERE id = :id")
     suspend fun updateCategory(id: String, category: CardCategory)

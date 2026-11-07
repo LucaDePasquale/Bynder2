@@ -8,6 +8,7 @@ import android.util.Log
 import android.util.Size
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,7 +20,9 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,8 +57,11 @@ import coil.compose.AsyncImage
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
+import com.example.pokemonbynder.data.model.CardCondition
+import com.example.pokemonbynder.data.model.CardEntryId
 import com.example.pokemonbynder.data.model.DEFAULT_BINDER_ID
 import com.example.pokemonbynder.data.model.PokemonCard
+import com.example.pokemonbynder.data.model.WishlistCard
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
@@ -121,6 +128,27 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     var showManualSearch by remember { mutableStateOf(false) }
     var lastContinuous by remember { mutableStateOf(prefs.getBoolean("continuous_scan", false)) }
     var listView by remember { mutableStateOf(prefs.getBoolean("list_view", false)) }
+
+    val wishlist by viewModel.wishlist.collectAsState()
+    val prices by viewModel.prices.collectAsState()
+    val priceProgress by viewModel.priceProgress.collectAsState()
+    var tab by rememberSaveable { mutableStateOf(0) } // 0 = binder, 1 = wishlist
+    var showWishSearch by remember { mutableStateOf(false) }
+    var wishToMove by remember { mutableStateOf<WishlistCard?>(null) }
+
+    // Selezione multipla: si entra con un tocco lungo su una carta
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var showDeleteSelected by remember { mutableStateOf(false) }
+    val selection = cards.filter { it.id in selectedIds }
+    val selecting = selection.isNotEmpty()
+    LaunchedEffect(selectedBinderId, tab) { selectedIds = emptySet() }
+    BackHandler(enabled = selecting) { selectedIds = emptySet() }
+
+    fun toggleSelected(card: PokemonCard) {
+        selectedIds = if (card.id in selectedIds) selectedIds - card.id else selectedIds + card.id
+    }
+
+    fun priceOf(card: PokemonCard): Double? = prices[CardEntryId.catalogKeyOf(card.id)]
     val binderNames = binders.associate { it.id to it.name }
 
     // Errori della ricerca (es. rete assente): si mostrano una volta sola.
@@ -141,13 +169,32 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("POKÉMON VIRTUAL BINDER", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            )
+            if (selecting) {
+                CenterAlignedTopAppBar(
+                    title = { Text(if (selection.size == 1) "1 selezionata" else "${selection.size} selezionate", fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = { selectedIds = emptySet() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Annulla selezione")
+                        }
+                    },
+                    actions = { TextButton(onClick = { showDeleteSelected = true }) { Text("Elimina") } },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                )
+            } else {
+                CenterAlignedTopAppBar(
+                    title = { Text("POKÉMON VIRTUAL BINDER", fontWeight = FontWeight.Bold) },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                )
+            }
         },
         floatingActionButton = {
-            if (catalogReady && !isScanning && candidates == null) {
+            if (catalogReady && !isScanning && candidates == null && !selecting && tab == 1) {
+                ExtendedFloatingActionButton(
+                    onClick = { showWishSearch = true },
+                    icon = { Icon(Icons.Default.Add, null) },
+                    text = { Text("Aggiungi alla wishlist") }
+                )
+            } else if (catalogReady && !isScanning && candidates == null && !selecting) {
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ExtendedFloatingActionButton(
                         onClick = { showManualSearch = true },
@@ -166,6 +213,29 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
+                TabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Binder") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Wishlist (${wishlist.size})") })
+                }
+
+                if (tab == 1) {
+                    WishlistTab(
+                        wishlist = wishlist,
+                        prices = prices,
+                        progress = priceProgress,
+                        onFound = { wishToMove = it },
+                        onRemove = { wish ->
+                            viewModel.removeFromWishlist(wish) { success ->
+                                if (!success) Toast.makeText(context, "Impossibile rimuovere la carta", Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        onRefresh = {
+                            viewModel.refreshWishlistPrices(wishlist) { found, checked ->
+                                Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    )
+                } else {
                 BinderBar(
                     binders = binders,
                     counts = cardCounts,
@@ -214,12 +284,29 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
 
                 SortAndViewBar(
                     count = cards.size,
+                    copies = cards.sumOf { it.quantity },
                     sortOrder = sortOrder,
                     onSortChange = { viewModel.setSortOrder(it) },
                     listView = listView,
                     onToggleView = {
                         listView = !listView
                         prefs.edit().putBoolean("list_view", listView).apply()
+                    }
+                )
+
+                ValueBar(
+                    text = valueText(
+                        label = "Valore",
+                        total = cards.sumOf { (priceOf(it) ?: 0.0) * it.quantity },
+                        withoutPrice = cards.count { priceOf(it) == null },
+                        cardCount = cards.size
+                    ),
+                    progress = priceProgress,
+                    enabled = cards.isNotEmpty(),
+                    onRefresh = {
+                        viewModel.refreshBinderPrices(cards) { found, checked ->
+                            Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
+                        }
                     }
                 )
 
@@ -240,7 +327,10 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                                 CardRow(
                                     card = card,
                                     binderName = if (selectedBinderId == null) binderNames[card.binderId] else null,
-                                    onClick = { cardToEdit = card }
+                                    price = priceOf(card),
+                                    selected = card.id in selectedIds,
+                                    onClick = { if (selecting) toggleSelected(card) else cardToEdit = card },
+                                    onLongClick = { toggleSelected(card) }
                                 )
                             }
                         }
@@ -256,12 +346,16 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                                     card = card,
                                     // Guardando tutti i binder insieme si vede in quale sta ogni carta
                                     binderName = if (selectedBinderId == null) binderNames[card.binderId] else null,
-                                    onClick = { cardToEdit = card }
+                                    price = priceOf(card),
+                                    selected = card.id in selectedIds,
+                                    onClick = { if (selecting) toggleSelected(card) else cardToEdit = card },
+                                    onLongClick = { toggleSelected(card) }
                                 )
                             }
                         }
                     }
                 }
+                } // fine della scheda Binder
             }
 
             if (isScanning) {
@@ -307,11 +401,12 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     candidates = list,
                     binders = binders,
                     defaultBinderId = selectedBinderId ?: binders.firstOrNull()?.id ?: DEFAULT_BINDER_ID,
-                    onConfirm = { card, category, binderId ->
-                        viewModel.confirmAndAddCard(card, category, binderId) { success ->
+                    onConfirm = { card, category, binderId, condition ->
+                        viewModel.confirmAndAddCard(card, category, binderId, condition) { success, quantity ->
                             if (success) {
                                 val where = binderNames[binderId]?.let { " in «$it»" }.orEmpty()
-                                Toast.makeText(context, "Aggiunta: ${card.name} (${card.number})$where", Toast.LENGTH_SHORT).show()
+                                val copies = if (quantity > 1) " (ora ×$quantity)" else ""
+                                Toast.makeText(context, "Aggiunta: ${card.name} (${card.number})$where$copies", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(context, "Errore nel salvataggio della carta", Toast.LENGTH_LONG).show()
                             }
@@ -326,8 +421,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 EditCardDialog(
                     card = card,
                     binders = binders,
-                    onConfirm = { category, binderId ->
-                        viewModel.updateCard(card, category, binderId) { success ->
+                    onConfirm = { category, binderId, quantity, condition ->
+                        viewModel.updateCard(card, category, binderId, quantity, condition) { success ->
                             if (success) Toast.makeText(context, "Carta aggiornata", Toast.LENGTH_SHORT).show()
                             else Toast.makeText(context, "Errore nel salvataggio", Toast.LENGTH_LONG).show()
                         }
@@ -352,7 +447,53 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                         showManualSearch = false
                         viewModel.pickManualCard(card)
                     },
+                    onWish = { card ->
+                        viewModel.addToWishlist(card) { added -> toastWishlist(context, added) }
+                    },
                     onDismiss = { showManualSearch = false }
+                )
+            }
+
+            // Wishlist: cerca le carte da aggiungere (il dialog resta aperto per aggiungerne più d'una)
+            if (showWishSearch) {
+                ManualSearchDialog(
+                    title = "Aggiungi alla wishlist",
+                    onSearch = { text, onResult -> viewModel.searchCatalog(text, onResult) },
+                    onPick = { card -> viewModel.addToWishlist(card) { added -> toastWishlist(context, added) } },
+                    onDismiss = { showWishSearch = false }
+                )
+            }
+
+            // Carta della wishlist trovata: va nel binder
+            wishToMove?.let { wish ->
+                WishlistFoundDialog(
+                    wish = wish,
+                    binders = binders,
+                    defaultBinderId = selectedBinderId ?: binders.firstOrNull()?.id ?: DEFAULT_BINDER_ID,
+                    onConfirm = { category, binderId, condition ->
+                        wishToMove = null
+                        viewModel.moveWishlistToBinder(wish, category, binderId, condition) { success ->
+                            if (success) Toast.makeText(context, "Aggiunta al binder: ${wish.name}", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Errore nel salvataggio della carta", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onDismiss = { wishToMove = null }
+                )
+            }
+
+            // Eliminazione delle carte selezionate
+            if (showDeleteSelected && selecting) {
+                DeleteCardsDialog(
+                    count = selection.size,
+                    onConfirm = {
+                        showDeleteSelected = false
+                        viewModel.deleteCards(selection) { success ->
+                            if (success) Toast.makeText(context, "Carte eliminate", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Impossibile eliminare le carte", Toast.LENGTH_LONG).show()
+                        }
+                        selectedIds = emptySet()
+                    },
+                    onDismiss = { showDeleteSelected = false }
                 )
             }
 
@@ -434,11 +575,12 @@ fun CandidateSelectionDialog(
     candidates: List<Candidate>,
     binders: List<Binder>,
     defaultBinderId: Long,
-    onConfirm: (CatalogCard, CardCategory, Long) -> Unit,
+    onConfirm: (CatalogCard, CardCategory, Long, CardCondition) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selected by remember(candidates) { mutableStateOf(candidates.first().card) }
     var selectedCategory by remember { mutableStateOf(CardCategory.NORMAL) }
+    var selectedCondition by remember { mutableStateOf(CardCondition.NEAR_MINT) }
     var selectedBinderId by remember(candidates) { mutableStateOf(defaultBinderId) }
 
     AlertDialog(
@@ -476,6 +618,8 @@ fun CandidateSelectionDialog(
                 Text("Scegli la tipologia della carta fisica:")
                 Spacer(modifier = Modifier.height(8.dp))
                 CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
+                Spacer(modifier = Modifier.height(8.dp))
+                ConditionPicker(selected = selectedCondition, onSelect = { selectedCondition = it })
 
                 if (binders.size > 1) {
                     Spacer(modifier = Modifier.height(16.dp))
@@ -485,7 +629,7 @@ fun CandidateSelectionDialog(
                 }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selected, selectedCategory, selectedBinderId) }) { Text("Aggiungi al Binder") } },
+        confirmButton = { Button(onClick = { onConfirm(selected, selectedCategory, selectedBinderId, selectedCondition) }) { Text("Aggiungi al Binder") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
@@ -495,12 +639,14 @@ fun CandidateSelectionDialog(
 fun EditCardDialog(
     card: PokemonCard,
     binders: List<Binder>,
-    onConfirm: (CardCategory, Long) -> Unit,
+    onConfirm: (CardCategory, Long, Int, CardCondition) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedCategory by remember(card.id) { mutableStateOf(card.category) }
     var selectedBinderId by remember(card.id) { mutableStateOf(card.binderId) }
+    var quantity by remember(card.id) { mutableStateOf(card.quantity) }
+    var condition by remember(card.id) { mutableStateOf(card.condition) }
     var confirmDelete by remember(card.id) { mutableStateOf(false) }
 
     if (confirmDelete) {
@@ -525,6 +671,11 @@ fun EditCardDialog(
                 Spacer(modifier = Modifier.height(4.dp))
                 CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
 
+                Spacer(modifier = Modifier.height(12.dp))
+                QuantityStepper(quantity = quantity, onChange = { quantity = it })
+                Spacer(modifier = Modifier.height(4.dp))
+                ConditionPicker(selected = condition, onSelect = { condition = it })
+
                 if (binders.size > 1) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Binder:")
@@ -539,7 +690,7 @@ fun EditCardDialog(
                 ) { Text("Elimina carta") }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selectedCategory, selectedBinderId) }) { Text("Salva") } },
+        confirmButton = { Button(onClick = { onConfirm(selectedCategory, selectedBinderId, quantity, condition) }) { Text("Salva") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
@@ -548,6 +699,7 @@ fun EditCardDialog(
 @Composable
 fun SortAndViewBar(
     count: Int,
+    copies: Int,
     sortOrder: SortOrder,
     onSortChange: (SortOrder) -> Unit,
     listView: Boolean,
@@ -559,7 +711,7 @@ fun SortAndViewBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            if (count == 1) "1 carta" else "$count carte",
+            (if (count == 1) "1 carta" else "$count carte") + if (copies != count) " · $copies copie" else "",
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.weight(1f)
         )
@@ -584,8 +736,10 @@ fun SortAndViewBar(
 /** Ricerca per nome nel catalogo offline; il risultato scelto passa al dialog di tipologia e binder. */
 @Composable
 fun ManualSearchDialog(
+    title: String = "Cerca una carta",
     onSearch: (String, (List<CatalogCard>?) -> Unit) -> Unit,
     onPick: (CatalogCard) -> Unit,
+    onWish: ((CatalogCard) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -614,7 +768,7 @@ fun ManualSearchDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Cerca una carta") },
+        title = { Text(title) },
         text = {
             Column {
                 OutlinedTextField(
@@ -642,12 +796,15 @@ fun ManualSearchDialog(
                                     modifier = Modifier.width(40.dp).height(56.dp),
                                     contentScale = ContentScale.Fit
                                 )
-                                Column(modifier = Modifier.padding(start = 12.dp)) {
+                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                                     Text(card.name, fontWeight = FontWeight.Bold)
                                     Text(
                                         "${card.setName} · ${card.number}$total · ${card.lang.uppercase()}",
                                         style = MaterialTheme.typography.bodySmall
                                     )
+                                }
+                                if (onWish != null) {
+                                    TextButton(onClick = { onWish(card) }) { Text("Wishlist") }
                                 }
                             }
                         }
@@ -1000,12 +1157,23 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClos
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CardItem(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
+fun CardItem(
+    card: PokemonCard,
+    binderName: String?,
+    price: Double?,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     Card(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
         elevation = CardDefaults.cardElevation(4.dp),
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+        )
     ) {
         Column {
             AsyncImage(
@@ -1015,8 +1183,9 @@ fun CardItem(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
                 contentScale = ContentScale.Fit
             )
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(card.name, fontWeight = FontWeight.Bold)
+                Text((if (selected) "✓ " else "") + card.name, fontWeight = FontWeight.Bold)
                 Text("Art: ${card.artist ?: "N/D"}", style = MaterialTheme.typography.bodySmall)
+                Text(cardDetailsLine(card, price), style = MaterialTheme.typography.bodySmall)
                 if (binderName != null) {
                     Text(
                         "Binder: $binderName",
@@ -1032,12 +1201,23 @@ fun CardItem(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
 }
 
 /** Versione compatta di [CardItem] per la vista a lista. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CardRow(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
+fun CardRow(
+    card: PokemonCard,
+    binderName: String?,
+    price: Double?,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick),
         elevation = CardDefaults.cardElevation(2.dp),
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+        )
     ) {
         Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
@@ -1047,13 +1227,19 @@ fun CardRow(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
                 contentScale = ContentScale.Fit
             )
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(card.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    (if (selected) "✓ " else "") + card.name,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     "${card.set} · ${card.number}",
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Text(cardDetailsLine(card, price), style = MaterialTheme.typography.bodySmall)
                 Text(
                     if (binderName != null) "${card.category.label} · $binderName" else card.category.label,
                     style = MaterialTheme.typography.bodySmall,
@@ -1063,4 +1249,20 @@ fun CardRow(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
             }
         }
     }
+}
+
+/** Messaggio al termine dell'aggiornamento dei prezzi. */
+fun priceResultMessage(found: Int?, checked: Int): String = when {
+    found == null -> "Impossibile contattare TCGdex. Controlla la connessione."
+    found == 0 -> "Nessun prezzo trovato per $checked ${if (checked == 1) "carta" else "carte"}."
+    else -> "Prezzi aggiornati: $found su $checked."
+}
+
+fun toastWishlist(context: Context, added: Boolean?) {
+    val message = when (added) {
+        true -> "Aggiunta alla wishlist"
+        false -> "Già nella wishlist"
+        null -> "Impossibile aggiungere alla wishlist"
+    }
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
