@@ -1,6 +1,7 @@
 package com.example.pokemonbynder
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -49,6 +50,7 @@ import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
+import com.example.pokemonbynder.scanner.ScanSource
 import com.example.pokemonbynder.ui.PokemonViewModel
 import com.example.pokemonbynder.ui.scanner.CardScannerAnalyzer
 import com.example.pokemonbynder.ui.scanner.ScannerGuide
@@ -90,6 +92,19 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     val catalogReady by viewModel.isCatalogReady.collectAsState()
     val context = LocalContext.current
     var cardToEdit by remember { mutableStateOf<PokemonCard?>(null) }
+    var showSourceDialog by remember { mutableStateOf(false) }
+    val scanSource by viewModel.scanSource.collectAsState()
+    val scanError by viewModel.scanError.collectAsState()
+    val prefs = remember { context.getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE) }
+    var lastSource by remember { mutableStateOf(ScanSource.fromName(prefs.getString("scan_source", null))) }
+
+    // Errori della ricerca (es. rete assente): si mostrano una volta sola.
+    LaunchedEffect(scanError) {
+        scanError?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            viewModel.clearScanError()
+        }
+    }
 
     var hasCameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
@@ -109,10 +124,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
         floatingActionButton = {
             if (catalogReady && !isScanning && candidates == null) {
                 ExtendedFloatingActionButton(
-                    onClick = {
-                        if (hasCameraPermission) viewModel.setScanning(true)
-                        else permissionLauncher.launch(Manifest.permission.CAMERA)
-                    },
+                    onClick = { showSourceDialog = true },
                     icon = { Icon(Icons.Default.Add, null) },
                     text = { Text("Scansiona Carta") }
                 )
@@ -135,6 +147,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
 
             if (isScanning) {
                 ScannerOverlay(
+                    sourceLabel = scanSource.label,
                     onReading = { reading -> viewModel.onReading(reading) },
                     onClose = { viewModel.setScanning(false) }
                 )
@@ -195,6 +208,22 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                         cardToEdit = null
                     },
                     onDismiss = { cardToEdit = null }
+                )
+            }
+
+            // Scelta della fonte (catalogo offline o TCGdex) prima di aprire la fotocamera
+            if (showSourceDialog) {
+                ScanSourceDialog(
+                    initial = lastSource,
+                    onConfirm = { source ->
+                        showSourceDialog = false
+                        lastSource = source
+                        prefs.edit().putString("scan_source", source.name).apply()
+                        viewModel.setScanSource(source)
+                        if (hasCameraPermission) viewModel.setScanning(true)
+                        else permissionLauncher.launch(Manifest.permission.CAMERA)
+                    },
+                    onDismiss = { showSourceDialog = false }
                 )
             }
         }
@@ -294,6 +323,42 @@ fun CategoryPicker(selected: CardCategory, onSelect: (CardCategory) -> Unit) {
     }
 }
 
+/** Chiede da dove cercare la carta; la scelta viene ricordata per la volta successiva. */
+@Composable
+fun ScanSourceDialog(
+    initial: ScanSource,
+    onConfirm: (ScanSource) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selected by remember { mutableStateOf(initial) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Da dove cercare la carta?") },
+        text = {
+            Column {
+                ScanSource.entries.forEach { source ->
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selected = source }
+                            .padding(vertical = 8.dp)
+                    ) {
+                        RadioButton(selected = selected == source, onClick = { selected = source })
+                        Column(modifier = Modifier.padding(start = 8.dp)) {
+                            Text(source.label, fontWeight = FontWeight.Bold)
+                            Text(source.description, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onConfirm(selected) }) { Text("Avvia scansione") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+    )
+}
+
 /** Tiene il riferimento a PreviewView per leggerne la dimensione dal thread dell'analizzatore. */
 private class PreviewHolder {
     @Volatile
@@ -301,7 +366,7 @@ private class PreviewHolder {
 }
 
 @Composable
-fun ScannerOverlay(onReading: (ScanReading) -> Unit, onClose: () -> Unit) {
+fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClose: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -401,6 +466,17 @@ fun ScannerOverlay(onReading: (ScanReading) -> Unit, onClose: () -> Unit) {
                     .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(8.dp)
             )
         }
+
+        Text(
+            "Fonte: $sourceLabel",
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                .padding(8.dp)
+        )
 
         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
             Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(32.dp))

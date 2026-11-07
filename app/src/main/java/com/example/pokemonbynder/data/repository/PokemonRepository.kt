@@ -5,10 +5,12 @@ import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.local.catalog.CatalogDao
 import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.PokemonCard
+import com.example.pokemonbynder.data.remote.TcgdexClient
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.CardMatcher
 import com.example.pokemonbynder.scanner.CardText
 import com.example.pokemonbynder.scanner.ScanReading
+import com.example.pokemonbynder.scanner.ScanSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -19,7 +21,8 @@ data class ScanMatch(val candidates: List<Candidate>, val confident: Boolean)
 
 class PokemonRepository(
     private val pokemonDao: PokemonDao,
-    private val catalogDao: CatalogDao
+    private val catalogDao: CatalogDao,
+    private val tcgdex: TcgdexClient = TcgdexClient()
 ) {
     companion object {
         private const val MAX_CANDIDATES = 6
@@ -33,11 +36,31 @@ class PokemonRepository(
     private var nameIndex: List<String>? = null
 
     /**
+     * Cerca la carta nella fonte scelta dall'utente prima della scansione.
+     * Con [ScanSource.TCGDEX] può lanciare IOException se la rete non è disponibile.
+     */
+    suspend fun findCandidates(reading: ScanReading, source: ScanSource = ScanSource.CATALOG): ScanMatch =
+        when (source) {
+            ScanSource.CATALOG -> findInCatalog(reading)
+            ScanSource.TCGDEX -> findOnTcgdex(reading)
+        }
+
+    /** Cerca su TCGdex (online) e ordina i risultati con lo stesso confronto usato per il catalogo. */
+    private suspend fun findOnTcgdex(reading: ScanReading): ScanMatch {
+        val search = tcgdex.findCards(reading)
+        if (search.cards.isEmpty()) return ScanMatch(emptyList(), false)
+
+        val effectiveReading = if (search.numberMatched) reading else reading.copy(number = null)
+        val ranked = CardMatcher.rank(search.cards, effectiveReading)
+        return ScanMatch(ranked.take(MAX_CANDIDATES), CardMatcher.isConfident(ranked))
+    }
+
+    /**
      * Cerca la carta nel catalogo locale (nessuna rete).
      * 1) Se è stato letto il numero (es. 025/165): prende solo le carte con quel numero e le ordina per nome.
      * 2) Altrimenti cerca i nomi più simili in tutto il catalogo.
      */
-    suspend fun findCandidates(reading: ScanReading): ScanMatch {
+    private suspend fun findInCatalog(reading: ScanReading): ScanMatch {
         val nameLines = reading.nameLines.map(CardText::normalizeName).filter { it.length >= 3 }
 
         val pool: List<CatalogCard>
