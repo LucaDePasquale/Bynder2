@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
+import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.repository.PokemonRepository
@@ -53,11 +54,30 @@ class PokemonViewModel(
     private val _scanError = MutableStateFlow<String?>(null)
     val scanError: StateFlow<String?> = _scanError.asStateFlow()
 
+    val binders: StateFlow<List<Binder>> = repository.binders
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Binder mostrato; null = tutti i binder insieme. */
+    private val _selectedBinderId = MutableStateFlow<Long?>(null)
+    val selectedBinderId: StateFlow<Long?> = _selectedBinderId.asStateFlow()
+
+    /** Tipologia usata come filtro; null = tutte. */
+    val filterCategory: StateFlow<CardCategory?> = _filterCategory.asStateFlow()
+
+    /** Quante carte contiene ogni binder (a prescindere dai filtri). */
+    val cardCounts: StateFlow<Map<Long, Int>> = repository.allCards
+        .map { list -> list.groupingBy { it.binderId }.eachCount() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    /** Carte da mostrare: nel binder scelto (o in tutti) e con la tipologia scelta (o tutte). */
     val cards: StateFlow<List<PokemonCard>> = combine(
         repository.allCards,
+        _selectedBinderId,
         _filterCategory
-    ) { allCards, category ->
-        if (category == null) allCards else allCards.filter { it.category == category }
+    ) { allCards, binderId, category ->
+        allCards.filter {
+            (binderId == null || it.binderId == binderId) && (category == null || it.category == category)
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val isProcessing = AtomicBoolean(false)
@@ -100,9 +120,9 @@ class PokemonViewModel(
                 val top = match.candidates.firstOrNull() ?: return@launch
                 if (!_isScanning.value) return@launch // chiuso nel frattempo
 
-                recentTops.addLast(top.card.binderId)
+                recentTops.addLast(top.card.catalogKey)
                 while (recentTops.size > RECENT_READINGS) recentTops.removeFirst()
-                val stable = recentTops.count { it == top.card.binderId } >= MIN_AGREEING_READINGS
+                val stable = recentTops.count { it == top.card.catalogKey } >= MIN_AGREEING_READINGS
 
                 val fallbackAfter = if (source == ScanSource.TCGDEX) ONLINE_FALLBACK_AFTER_MS else FALLBACK_AFTER_MS
                 val waitedLong = SystemClock.elapsedRealtime() - scanStartedAt > fallbackAfter &&
@@ -130,25 +150,70 @@ class PokemonViewModel(
         }
     }
 
-    fun confirmAndAddCard(card: CatalogCard, category: CardCategory, onResult: (Boolean) -> Unit) {
+    fun confirmAndAddCard(card: CatalogCard, category: CardCategory, binderId: Long, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
-                repository.saveCardToBinder(card, category)
+                repository.saveCardToBinder(card, category, binderId)
                 _candidates.value = null
                 onResult(true)
             } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Salvataggio della carta non riuscito", e)
                 onResult(false)
             }
         }
     }
 
-    /** Cambia la tipologia di una carta già nel binder. */
-    fun updateCardCategory(card: PokemonCard, category: CardCategory, onResult: (Boolean) -> Unit) {
+    /** Cambia tipologia e/o binder di una carta già salvata. */
+    fun updateCard(card: PokemonCard, category: CardCategory, binderId: Long, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
-                repository.updateCategory(card.id, category)
+                repository.updateCard(card, category, binderId)
                 onResult(true)
             } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Modifica della carta non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
+    fun selectBinder(id: Long?) {
+        _selectedBinderId.value = id
+    }
+
+    /** Crea un binder e lo mostra subito. */
+    fun addBinder(name: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                _selectedBinderId.value = repository.addBinder(name)
+                onResult(true)
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Creazione del binder non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
+    fun renameBinder(id: Long, name: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.renameBinder(id, name)
+                onResult(true)
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Rinomina del binder non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
+    /** Elimina il binder e le sue carte. */
+    fun deleteBinder(id: Long, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.deleteBinder(id)
+                if (_selectedBinderId.value == id) _selectedBinderId.value = null
+                onResult(true)
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Eliminazione del binder non riuscita", e)
                 onResult(false)
             }
         }

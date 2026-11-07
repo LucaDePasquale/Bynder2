@@ -27,6 +27,6 @@ data class CatalogCard(
     val cardType: String,
     val imageUrl: String       // può essere vuoto: alcune carte non hanno immagine nel database
 ) {
-    /** Identificativo stabile usato per il binder. */
-    val binderId: String get() = "$lang:$setCode:$number"
+    /** Identificativo stabile della carta nel catalogo (non dipende dal binder). */
+    val catalogKey: String get() = "$lang:$setCode:$number"
 }

@@ -19,6 +19,12 @@ interface PokemonDao {
     @Query("UPDATE pokemon_cards SET category = :category WHERE id = :id")
     suspend fun updateCategory(id: String, category: CardCategory)
 
+    @Query("DELETE FROM pokemon_cards WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM pokemon_cards WHERE binderId = :binderId")
+    suspend fun deleteCardsInBinder(binderId: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCard(card: PokemonCard)
 

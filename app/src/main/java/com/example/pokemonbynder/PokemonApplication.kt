@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.room.Room
 import com.example.pokemonbynder.data.local.AppDatabase
+import com.example.pokemonbynder.data.local.MIGRATION_1_2
 import com.example.pokemonbynder.data.local.catalog.CatalogDatabase
 import com.example.pokemonbynder.data.local.catalog.CatalogImporter
 import com.example.pokemonbynder.data.repository.PokemonRepository
@@ -39,7 +40,7 @@ class PokemonApplication : Application() {
             this,
             AppDatabase::class.java,
             "pokemon_binder_db"
-        ).build()
+        ).addMigrations(MIGRATION_1_2).build()
 
         catalogDatabase = Room.databaseBuilder(
             this,
@@ -47,7 +48,16 @@ class PokemonApplication : Application() {
             "catalog_db"
         ).build()
 
-        repository = PokemonRepository(database.pokemonDao(), catalogDatabase.catalogDao())
+        repository = PokemonRepository(database.pokemonDao(), catalogDatabase.catalogDao(), database.binderDao())
+
+        // Con un'installazione nuova non c'è ancora nessun binder: si crea quello di partenza.
+        appScope.launch {
+            try {
+                repository.ensureDefaultBinder()
+            } catch (e: Exception) {
+                Log.e("PokemonApplication", "Creazione del binder di partenza non riuscita", e)
+            }
+        }
 
         appScope.launch {
             try {

@@ -20,6 +20,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.rememberScrollState
@@ -37,6 +38,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -46,7 +48,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
+import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
+import com.example.pokemonbynder.data.model.DEFAULT_BINDER_ID
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
@@ -98,6 +102,16 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     val prefs = remember { context.getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE) }
     var lastSource by remember { mutableStateOf(ScanSource.fromName(prefs.getString("scan_source", null))) }
 
+    val binders by viewModel.binders.collectAsState()
+    val selectedBinderId by viewModel.selectedBinderId.collectAsState()
+    val filterCategory by viewModel.filterCategory.collectAsState()
+    val cardCounts by viewModel.cardCounts.collectAsState()
+    var showNewBinderDialog by remember { mutableStateOf(false) }
+    var binderToRename by remember { mutableStateOf<Binder?>(null) }
+    var binderToDelete by remember { mutableStateOf<Binder?>(null) }
+    val selectedBinder = binders.firstOrNull { it.id == selectedBinderId }
+    val binderNames = binders.associate { it.id to it.name }
+
     // Errori della ricerca (es. rete assente): si mostrano una volta sola.
     LaunchedEffect(scanError) {
         scanError?.let {
@@ -132,16 +146,62 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            if (cards.isEmpty() && !isScanning) {
-                Text("Binder vuoto. Scansiona una carta!", modifier = Modifier.align(Alignment.Center))
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(cards, key = { it.id }) { card -> CardItem(card, onClick = { cardToEdit = card }) }
+            Column(modifier = Modifier.fillMaxSize()) {
+                BinderBar(
+                    binders = binders,
+                    counts = cardCounts,
+                    selectedId = selectedBinderId,
+                    onSelect = { viewModel.selectBinder(it) },
+                    onAdd = { showNewBinderDialog = true }
+                )
+
+                // Con un binder scelto si può rinominare o eliminare (l'ultimo binder non si elimina)
+                if (selectedBinder != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            selectedBinder.name,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { binderToRename = selectedBinder }) { Text("Rinomina") }
+                        TextButton(
+                            onClick = { binderToDelete = selectedBinder },
+                            enabled = binders.size > 1
+                        ) { Text("Elimina") }
+                    }
+                }
+
+                CategoryFilterBar(selected = filterCategory, onSelect = { viewModel.setFilterCategory(it) })
+
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    if (cards.isEmpty()) {
+                        val inScope = selectedBinderId?.let { cardCounts[it] ?: 0 } ?: cardCounts.values.sum()
+                        Text(
+                            if (inScope == 0) "Binder vuoto. Scansiona una carta!" else "Nessuna carta con questa tipologia.",
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp)
+                        )
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            contentPadding = PaddingValues(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(cards, key = { it.id }) { card ->
+                                CardItem(
+                                    card = card,
+                                    // Guardando tutti i binder insieme si vede in quale sta ogni carta
+                                    binderName = if (selectedBinderId == null) binderNames[card.binderId] else null,
+                                    onClick = { cardToEdit = card }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -182,32 +242,87 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 }
             }
 
-            // Dialog per scegliere la carta giusta e la tipologia
+            // Dialog per scegliere la carta giusta, la tipologia e il binder
             candidates?.let { list ->
                 CandidateSelectionDialog(
                     candidates = list,
-                    onConfirm = { card, category ->
-                        viewModel.confirmAndAddCard(card, category) { success ->
-                            if (success) Toast.makeText(context, "Aggiunta: ${card.name} (${card.number})", Toast.LENGTH_SHORT).show()
-                            else Toast.makeText(context, "Errore nel salvataggio della carta", Toast.LENGTH_LONG).show()
+                    binders = binders,
+                    defaultBinderId = selectedBinderId ?: binders.firstOrNull()?.id ?: DEFAULT_BINDER_ID,
+                    onConfirm = { card, category, binderId ->
+                        viewModel.confirmAndAddCard(card, category, binderId) { success ->
+                            if (success) {
+                                val where = binderNames[binderId]?.let { " in «$it»" }.orEmpty()
+                                Toast.makeText(context, "Aggiunta: ${card.name} (${card.number})$where", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Errore nel salvataggio della carta", Toast.LENGTH_LONG).show()
+                            }
                         }
                     },
                     onDismiss = { viewModel.cancelSelection() }
                 )
             }
 
-            // Dialog per cambiare la tipologia di una carta già nel binder
+            // Dialog per cambiare tipologia e/o binder di una carta già salvata
             cardToEdit?.let { card ->
-                EditCategoryDialog(
+                EditCardDialog(
                     card = card,
-                    onConfirm = { category ->
-                        viewModel.updateCardCategory(card, category) { success ->
-                            if (success) Toast.makeText(context, "Tipologia aggiornata: ${category.label}", Toast.LENGTH_SHORT).show()
+                    binders = binders,
+                    onConfirm = { category, binderId ->
+                        viewModel.updateCard(card, category, binderId) { success ->
+                            if (success) Toast.makeText(context, "Carta aggiornata", Toast.LENGTH_SHORT).show()
                             else Toast.makeText(context, "Errore nel salvataggio", Toast.LENGTH_LONG).show()
                         }
                         cardToEdit = null
                     },
                     onDismiss = { cardToEdit = null }
+                )
+            }
+
+            // Nuovo binder, rinomina ed eliminazione
+            if (showNewBinderDialog) {
+                BinderNameDialog(
+                    title = "Nuovo binder",
+                    initialName = "",
+                    confirmLabel = "Crea",
+                    takenNames = binders.map { it.name },
+                    onConfirm = { name ->
+                        showNewBinderDialog = false
+                        viewModel.addBinder(name) { success ->
+                            if (!success) Toast.makeText(context, "Impossibile creare il binder", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onDismiss = { showNewBinderDialog = false }
+                )
+            }
+
+            binderToRename?.let { binder ->
+                BinderNameDialog(
+                    title = "Rinomina binder",
+                    initialName = binder.name,
+                    confirmLabel = "Salva",
+                    takenNames = binders.filter { it.id != binder.id }.map { it.name },
+                    onConfirm = { name ->
+                        binderToRename = null
+                        viewModel.renameBinder(binder.id, name) { success ->
+                            if (!success) Toast.makeText(context, "Impossibile rinominare il binder", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onDismiss = { binderToRename = null }
+                )
+            }
+
+            binderToDelete?.let { binder ->
+                DeleteBinderDialog(
+                    binder = binder,
+                    cardCount = cardCounts[binder.id] ?: 0,
+                    onConfirm = {
+                        binderToDelete = null
+                        viewModel.deleteBinder(binder.id) { success ->
+                            if (success) Toast.makeText(context, "Binder eliminato", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Impossibile eliminare il binder", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onDismiss = { binderToDelete = null }
                 )
             }
 
@@ -233,11 +348,14 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
 @Composable
 fun CandidateSelectionDialog(
     candidates: List<Candidate>,
-    onConfirm: (CatalogCard, CardCategory) -> Unit,
+    binders: List<Binder>,
+    defaultBinderId: Long,
+    onConfirm: (CatalogCard, CardCategory, Long) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selected by remember(candidates) { mutableStateOf(candidates.first().card) }
     var selectedCategory by remember { mutableStateOf(CardCategory.NORMAL) }
+    var selectedBinderId by remember(candidates) { mutableStateOf(defaultBinderId) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -274,34 +392,198 @@ fun CandidateSelectionDialog(
                 Text("Scegli la tipologia della carta fisica:")
                 Spacer(modifier = Modifier.height(8.dp))
                 CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
+
+                if (binders.size > 1) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Scegli il binder:")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    BinderPicker(binders = binders, selectedId = selectedBinderId, onSelect = { selectedBinderId = it })
+                }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selected, selectedCategory) }) { Text("Aggiungi al Binder") } },
+        confirmButton = { Button(onClick = { onConfirm(selected, selectedCategory, selectedBinderId) }) { Text("Aggiungi al Binder") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
 
-/** Cambia la tipologia di una carta già presente nel binder. */
+/** Cambia tipologia e/o binder di una carta già salvata. */
 @Composable
-fun EditCategoryDialog(
+fun EditCardDialog(
     card: PokemonCard,
-    onConfirm: (CardCategory) -> Unit,
+    binders: List<Binder>,
+    onConfirm: (CardCategory, Long) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedCategory by remember(card.id) { mutableStateOf(card.category) }
+    var selectedBinderId by remember(card.id) { mutableStateOf(card.binderId) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Modifica tipologia") },
+        title = { Text("Modifica carta") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(card.name, fontWeight = FontWeight.Bold)
                 Text("${card.set} · ${card.number}", style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(12.dp))
+                Text("Tipologia:")
+                Spacer(modifier = Modifier.height(4.dp))
                 CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
+
+                if (binders.size > 1) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Binder:")
+                    Spacer(modifier = Modifier.height(4.dp))
+                    BinderPicker(binders = binders, selectedId = selectedBinderId, onSelect = { selectedBinderId = it })
+                }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selectedCategory) }) { Text("Salva") } },
+        confirmButton = { Button(onClick = { onConfirm(selectedCategory, selectedBinderId) }) { Text("Salva") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+    )
+}
+
+/** Elenco dei binder tra cui scegliere (in aggiunta e in modifica di una carta). */
+@Composable
+fun BinderPicker(binders: List<Binder>, selectedId: Long, onSelect: (Long) -> Unit) {
+    binders.forEach { binder ->
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect(binder.id) }
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+        ) {
+            RadioButton(selected = selectedId == binder.id, onClick = { onSelect(binder.id) })
+            Text(binder.name, modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+/** Barra scorrevole con "Tutti" e un chip per ogni binder (con il numero di carte), più "Nuovo binder". */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BinderBar(
+    binders: List<Binder>,
+    counts: Map<Long, Int>,
+    selectedId: Long?,
+    onSelect: (Long?) -> Unit,
+    onAdd: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Binder:", style = MaterialTheme.typography.labelMedium)
+        FilterChip(
+            selected = selectedId == null,
+            onClick = { onSelect(null) },
+            label = { Text("Tutti (${counts.values.sum()})") }
+        )
+        binders.forEach { binder ->
+            FilterChip(
+                selected = selectedId == binder.id,
+                onClick = { onSelect(binder.id) },
+                label = { Text("${binder.name} (${counts[binder.id] ?: 0})") }
+            )
+        }
+        AssistChip(onClick = onAdd, label = { Text("+ Nuovo binder") })
+    }
+}
+
+/** Barra scorrevole per filtrare le carte per tipologia (dentro il binder scelto o in tutti). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CategoryFilterBar(selected: CardCategory?, onSelect: (CardCategory?) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Tipologia:", style = MaterialTheme.typography.labelMedium)
+        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text("Tutte") })
+        CardCategory.entries.forEach { category ->
+            FilterChip(
+                selected = selected == category,
+                onClick = { onSelect(category) },
+                label = { Text(category.label) }
+            )
+        }
+    }
+}
+
+/** Chiede il nome di un binder (nuovo o da rinominare); non accetta nomi vuoti o già usati. */
+@Composable
+fun BinderNameDialog(
+    title: String,
+    initialName: String,
+    confirmLabel: String,
+    takenNames: List<String>,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(initialName) }
+    val trimmed = name.trim()
+    val duplicate = takenNames.any { it.equals(trimmed, ignoreCase = true) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { if (it.length <= 40) name = it },
+                    label = { Text("Nome del binder") },
+                    singleLine = true,
+                    isError = duplicate
+                )
+                if (duplicate) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Esiste già un binder con questo nome",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(trimmed) }, enabled = trimmed.isNotEmpty() && !duplicate) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+    )
+}
+
+/** Conferma prima di eliminare un binder, dicendo quante carte verranno eliminate con lui. */
+@Composable
+fun DeleteBinderDialog(
+    binder: Binder,
+    cardCount: Int,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Eliminare il binder?") },
+        text = {
+            Text(
+                when (cardCount) {
+                    0 -> "«${binder.name}» è vuoto e verrà eliminato."
+                    1 -> "«${binder.name}» e la sua carta verranno eliminati. L'operazione non si può annullare."
+                    else -> "«${binder.name}» e le sue $cardCount carte verranno eliminati. L'operazione non si può annullare."
+                }
+            )
+        },
+        confirmButton = { Button(onClick = onConfirm) { Text("Elimina") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
@@ -485,7 +767,7 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClos
 }
 
 @Composable
-fun CardItem(card: PokemonCard, onClick: () -> Unit) {
+fun CardItem(card: PokemonCard, binderName: String?, onClick: () -> Unit) {
     Card(
         modifier = Modifier.clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(4.dp),
@@ -501,6 +783,14 @@ fun CardItem(card: PokemonCard, onClick: () -> Unit) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(card.name, fontWeight = FontWeight.Bold)
                 Text("Art: ${card.artist ?: "N/D"}", style = MaterialTheme.typography.bodySmall)
+                if (binderName != null) {
+                    Text(
+                        "Binder: $binderName",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 SuggestionChip(onClick = onClick, label = { Text(card.category.label) })
             }
         }

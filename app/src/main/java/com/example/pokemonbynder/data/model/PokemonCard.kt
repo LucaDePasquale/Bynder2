@@ -1,11 +1,12 @@
 package com.example.pokemonbynder.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "pokemon_cards")
 data class PokemonCard(
-    @PrimaryKey val id: String, // ID unico dall'API (es: "sv4pt5-151")
+    @PrimaryKey val id: String, // Unico per carta E binder (vedi CardEntryId), es: "it:xy1:17" o "3|it:xy1:17"
     val name: String,
     val supertype: String, // Es: "Pokémon"
     val subtypes: List<String>, // Es: ["Basic"]
@@ -14,7 +15,8 @@ data class PokemonCard(
     val rarity: String?,
     val imageUrl: String,
     val set: String,
-    val category: CardCategory // Tipologia della carta fisica, modificabile dopo l'aggiunta
+    val category: CardCategory, // Tipologia della carta fisica, modificabile dopo l'aggiunta
+    @ColumnInfo(defaultValue = "1") val binderId: Long = DEFAULT_BINDER_ID // Binder che contiene la carta
 )
 
 /**

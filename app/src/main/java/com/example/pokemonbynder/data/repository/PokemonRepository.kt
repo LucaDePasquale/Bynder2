@@ -1,9 +1,14 @@
 package com.example.pokemonbynder.data.repository
 
+import com.example.pokemonbynder.data.local.BinderDao
 import com.example.pokemonbynder.data.local.PokemonDao
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.local.catalog.CatalogDao
+import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
+import com.example.pokemonbynder.data.model.CardEntryId
+import com.example.pokemonbynder.data.model.DEFAULT_BINDER_ID
+import com.example.pokemonbynder.data.model.DEFAULT_BINDER_NAME
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.remote.TcgdexClient
 import com.example.pokemonbynder.scanner.Candidate
@@ -22,6 +27,7 @@ data class ScanMatch(val candidates: List<Candidate>, val confident: Boolean)
 class PokemonRepository(
     private val pokemonDao: PokemonDao,
     private val catalogDao: CatalogDao,
+    private val binderDao: BinderDao,
     private val tcgdex: TcgdexClient = TcgdexClient()
 ) {
     companion object {
@@ -32,6 +38,7 @@ class PokemonRepository(
     }
 
     val allCards: Flow<List<PokemonCard>> = pokemonDao.getAllCards()
+    val binders: Flow<List<Binder>> = binderDao.getAll()
 
     private var nameIndex: List<String>? = null
 
@@ -98,10 +105,10 @@ class PokemonRepository(
         return if (names.isEmpty()) emptyList() else catalogDao.byNameNorm(names)
     }
 
-    suspend fun saveCardToBinder(card: CatalogCard, category: CardCategory) {
+    suspend fun saveCardToBinder(card: CatalogCard, category: CardCategory, binderId: Long) {
         pokemonDao.insertCard(
             PokemonCard(
-                id = card.binderId,
+                id = CardEntryId.of(binderId, card.catalogKey),
                 name = card.name,
                 supertype = card.cardType,
                 subtypes = emptyList(),
@@ -110,13 +117,45 @@ class PokemonRepository(
                 rarity = card.rarity,
                 imageUrl = card.imageUrl,
                 set = card.setName,
-                category = category
+                category = category,
+                binderId = binderId
             )
         )
     }
 
-    suspend fun updateCategory(cardId: String, category: CardCategory) {
-        pokemonDao.updateCategory(cardId, category)
+    /**
+     * Cambia tipologia e/o binder di una carta già salvata.
+     * Per spostarla si crea la riga nel nuovo binder e poi si toglie la vecchia: se nel nuovo binder
+     * la stessa carta c'è già, viene aggiornata e non duplicata.
+     */
+    suspend fun updateCard(card: PokemonCard, category: CardCategory, binderId: Long) {
+        if (binderId == card.binderId) {
+            pokemonDao.updateCategory(card.id, category)
+            return
+        }
+        val newId = CardEntryId.of(binderId, CardEntryId.catalogKeyOf(card.id))
+        pokemonDao.insertCard(card.copy(id = newId, binderId = binderId, category = category))
+        pokemonDao.deleteById(card.id)
+    }
+
+    /** Con un'installazione nuova non c'è nessun binder: si crea quello di partenza. */
+    suspend fun ensureDefaultBinder() {
+        if (binderDao.count() == 0) {
+            binderDao.insertIfAbsent(Binder(id = DEFAULT_BINDER_ID, name = DEFAULT_BINDER_NAME))
+        }
+    }
+
+    /** Crea un binder e restituisce il suo id. */
+    suspend fun addBinder(name: String): Long = binderDao.insert(Binder(name = name.trim()))
+
+    suspend fun renameBinder(id: Long, name: String) {
+        binderDao.rename(id, name.trim())
+    }
+
+    /** Elimina il binder insieme alle carte che contiene. */
+    suspend fun deleteBinder(id: Long) {
+        pokemonDao.deleteCardsInBinder(id)
+        binderDao.delete(id)
     }
 
     fun getCardsByArtist(artist: String) = pokemonDao.getCardsByArtist(artist)
