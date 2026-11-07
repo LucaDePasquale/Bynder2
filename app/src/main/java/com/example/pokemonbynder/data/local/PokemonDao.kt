@@ -7,7 +7,8 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PokemonDao {
-    @Query("SELECT * FROM pokemon_cards")
+    // rowid = ordine di inserimento: serve per "più recenti"
+    @Query("SELECT * FROM pokemon_cards ORDER BY rowid")
     fun getAllCards(): Flow<List<PokemonCard>>
 
     @Query("SELECT * FROM pokemon_cards WHERE artist = :artist")

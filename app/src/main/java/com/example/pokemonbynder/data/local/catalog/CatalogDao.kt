@@ -21,6 +21,14 @@ interface CatalogDao {
     @Query("SELECT * FROM catalog_cards WHERE nameNorm IN (:names)")
     suspend fun byNameNorm(names: List<String>): List<CatalogCard>
 
+    /** Ricerca manuale: nomi che contengono il testo (già normalizzato), prima quelli che iniziano così. */
+    @Query(
+        "SELECT * FROM catalog_cards WHERE nameNorm LIKE '%' || :query || '%' " +
+            "ORDER BY CASE WHEN nameNorm LIKE :query || '%' THEN 0 ELSE 1 END, nameNorm, setName, lang DESC " +
+            "LIMIT :limit"
+    )
+    suspend fun searchByName(query: String, limit: Int): List<CatalogCard>
+
     @Query("SELECT DISTINCT nameNorm FROM catalog_cards")
     suspend fun distinctNames(): List<String>
 }

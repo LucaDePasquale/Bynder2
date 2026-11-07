@@ -13,9 +13,18 @@ import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+
+/** Ordine in cui si mostrano le carte. */
+enum class SortOrder(val label: String) {
+    RECENT("Più recenti"),
+    NAME("Nome"),
+    SET("Set"),
+    NUMBER("Numero")
+}
 
 class PokemonViewModel(
     private val repository: PokemonRepository,
@@ -34,6 +43,9 @@ class PokemonViewModel(
         /** Online la ricerca è più lenta: si aspetta di più e si limitano le richieste a TCGdex. */
         private const val ONLINE_FALLBACK_AFTER_MS = 8_000L
         private const val ONLINE_MIN_INTERVAL_MS = 1_500L
+
+        /** Pausa prima di riaprire la fotocamera in scansione continua, per non rileggere la carta appena aggiunta. */
+        private const val REOPEN_CAMERA_DELAY_MS = 2_000L
     }
 
     val isCatalogReady: StateFlow<Boolean> = catalogReady
@@ -69,16 +81,54 @@ class PokemonViewModel(
         .map { list -> list.groupingBy { it.binderId }.eachCount() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
-    /** Carte da mostrare: nel binder scelto (o in tutti) e con la tipologia scelta (o tutte). */
+    /** Testo cercato nel binder (nome, set o numero); vuoto = nessuna ricerca. */
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _sortOrder = MutableStateFlow(SortOrder.RECENT)
+    val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
+
+    /** Se attivo, dopo aver aggiunto una carta scansionata la fotocamera si riapre per la successiva. */
+    private val _continuousScan = MutableStateFlow(false)
+    val continuousScan: StateFlow<Boolean> = _continuousScan.asStateFlow()
+
+    /** Vero quando la carta in scelta arriva dalla ricerca manuale (e non dalla fotocamera). */
+    private var addingManually = false
+
+    /**
+     * Carte da mostrare: nel binder scelto (o in tutti), con la tipologia scelta (o tutte),
+     * che contengono il testo cercato, nell'ordine scelto.
+     */
     val cards: StateFlow<List<PokemonCard>> = combine(
         repository.allCards,
         _selectedBinderId,
-        _filterCategory
-    ) { allCards, binderId, category ->
-        allCards.filter {
-            (binderId == null || it.binderId == binderId) && (category == null || it.category == category)
+        _filterCategory,
+        _searchQuery,
+        _sortOrder
+    ) { allCards, binderId, category, query, order ->
+        val text = query.trim()
+        val filtered = allCards.filter {
+            (binderId == null || it.binderId == binderId) &&
+                (category == null || it.category == category) &&
+                (text.isEmpty() || it.matches(text))
+        }
+        when (order) {
+            // Il database le restituisce dalla più vecchia alla più nuova
+            SortOrder.RECENT -> filtered.asReversed()
+            SortOrder.NAME -> filtered.sortedWith(compareBy({ it.name.lowercase() }, { it.set }))
+            SortOrder.SET -> filtered.sortedWith(compareBy({ it.set.lowercase() }, { numberOrder(it.number) }, { it.number }))
+            SortOrder.NUMBER -> filtered.sortedWith(compareBy({ numberOrder(it.number) }, { it.number }, { it.name.lowercase() }))
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Numero come intero per ordinare "2" prima di "10"; le carte senza cifre ("TG") vanno in fondo. */
+    private fun numberOrder(number: String): Int =
+        number.takeWhile { it.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
+
+    private fun PokemonCard.matches(text: String): Boolean =
+        name.contains(text, ignoreCase = true) ||
+            set.contains(text, ignoreCase = true) ||
+            number.contains(text, ignoreCase = true)
 
     private val isProcessing = AtomicBoolean(false)
     private val recentTops = ArrayDeque<String>()
@@ -155,7 +205,14 @@ class PokemonViewModel(
             try {
                 repository.saveCardToBinder(card, category, binderId)
                 _candidates.value = null
+                val reopenCamera = _continuousScan.value && !addingManually
+                addingManually = false
                 onResult(true)
+                // Scansione continua: dopo una breve pausa (il tempo di cambiare carta) si riapre la fotocamera
+                if (reopenCamera) {
+                    delay(REOPEN_CAMERA_DELAY_MS)
+                    if (!_isScanning.value && _candidates.value == null) setScanning(true)
+                }
             } catch (e: Exception) {
                 Log.e("PokemonViewModel", "Salvataggio della carta non riuscito", e)
                 onResult(false)
@@ -221,6 +278,53 @@ class PokemonViewModel(
 
     fun cancelSelection() {
         _candidates.value = null
+        addingManually = false
+    }
+
+    fun setSearchQuery(text: String) {
+        _searchQuery.value = text
+    }
+
+    fun setSortOrder(order: SortOrder) {
+        _sortOrder.value = order
+    }
+
+    fun setContinuousScan(enabled: Boolean) {
+        _continuousScan.value = enabled
+    }
+
+    /** Toglie una singola carta dal binder. */
+    fun deleteCard(card: PokemonCard, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.deleteCard(card)
+                onResult(true)
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Eliminazione della carta non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
+    /** Ricerca manuale nel catalogo; [onResult] riceve null se la ricerca è fallita. */
+    fun searchCatalog(text: String, onResult: (List<CatalogCard>?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(repository.searchCatalog(text))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Ricerca manuale non riuscita", e)
+                onResult(null)
+            }
+        }
+    }
+
+    /** Carta scelta a mano dai risultati: si apre lo stesso dialog di tipologia e binder della scansione. */
+    fun pickManualCard(card: CatalogCard) {
+        addingManually = true
+        _isScanning.value = false
+        _candidates.value = listOf(Candidate(card, 1.0))
     }
 
     fun setFilterCategory(category: CardCategory?) {

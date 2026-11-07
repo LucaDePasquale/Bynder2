@@ -35,6 +35,7 @@ class PokemonRepository(
         private const val NAME_MIN_SIMILARITY = 0.75
         private const val NAME_MAX_LENGTH_DIFF = 3
         private const val NAMES_PER_LINE = 8
+        private const val MANUAL_SEARCH_LIMIT = 40
     }
 
     val allCards: Flow<List<PokemonCard>> = pokemonDao.getAllCards()
@@ -136,6 +137,18 @@ class PokemonRepository(
         val newId = CardEntryId.of(binderId, CardEntryId.catalogKeyOf(card.id))
         pokemonDao.insertCard(card.copy(id = newId, binderId = binderId, category = category))
         pokemonDao.deleteById(card.id)
+    }
+
+    /** Toglie una singola carta dal suo binder. */
+    suspend fun deleteCard(card: PokemonCard) {
+        pokemonDao.deleteById(card.id)
+    }
+
+    /** Ricerca manuale nel catalogo offline (per quando la scansione non riconosce la carta). */
+    suspend fun searchCatalog(text: String): List<CatalogCard> {
+        val query = CardText.normalizeName(text)
+        if (query.length < 2) return emptyList()
+        return catalogDao.searchByName(query, MANUAL_SEARCH_LIMIT)
     }
 
     /** Con un'installazione nuova non c'è nessun binder: si crea quello di partenza. */
