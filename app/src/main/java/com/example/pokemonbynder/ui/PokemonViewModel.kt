@@ -4,6 +4,9 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.pokemonbynder.data.backup.BackupException
+import com.example.pokemonbynder.data.backup.BackupManager
+import com.example.pokemonbynder.data.backup.ImportResult
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
@@ -31,7 +34,8 @@ enum class SortOrder(val label: String) {
 
 class PokemonViewModel(
     private val repository: PokemonRepository,
-    catalogReady: StateFlow<Boolean>
+    catalogReady: StateFlow<Boolean>,
+    private val backupManager: BackupManager
 ) : ViewModel() {
 
     companion object {
@@ -359,6 +363,40 @@ class PokemonViewModel(
             } catch (e: Exception) {
                 Log.e("PokemonViewModel", "Eliminazione delle carte non riuscita", e)
                 onResult(false)
+            }
+        }
+    }
+
+    /** Tutte le carte di tutti i binder, senza filtri (per backup e condivisione). */
+    val allCards: StateFlow<List<PokemonCard>> = repository.allCards
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Crea il testo del backup; [onResult] riceve null se qualcosa va storto. */
+    fun exportBackup(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(backupManager.export())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Creazione del backup non riuscita", e)
+                onResult(null)
+            }
+        }
+    }
+
+    /** Unisce il backup alla collezione; [onResult] riceve l'esito oppure il messaggio d'errore. */
+    fun importBackup(json: String, onResult: (ImportResult?, String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(backupManager.import(json), null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: BackupException) {
+                onResult(null, e.message)
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Ripristino del backup non riuscito", e)
+                onResult(null, "Ripristino non riuscito. La collezione non è stata modificata.")
             }
         }
     }

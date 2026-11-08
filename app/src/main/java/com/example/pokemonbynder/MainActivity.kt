@@ -48,6 +48,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.pokemonbynder.data.backup.ImportResult
+import com.example.pokemonbynder.data.backup.ShareText
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -70,7 +72,13 @@ import com.example.pokemonbynder.ui.SortOrder
 import com.example.pokemonbynder.ui.scanner.CardScannerAnalyzer
 import com.example.pokemonbynder.ui.scanner.ScannerGuide
 import com.example.pokemonbynder.ui.theme.PokemonBynderTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.Executors
 
@@ -88,7 +96,7 @@ class MainActivity : ComponentActivity() {
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                            return PokemonViewModel(repository, catalogReady) as T
+                            return PokemonViewModel(repository, catalogReady, app.backupManager) as T
                         }
                     }
                 )
@@ -133,6 +141,49 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     val prices by viewModel.prices.collectAsState()
     val priceProgress by viewModel.priceProgress.collectAsState()
     var tab by rememberSaveable { mutableStateOf(0) } // 0 = binder, 1 = wishlist
+
+    // Backup su file e condivisione di liste
+    val allCards by viewModel.allCards.collectAsState()
+    val scope = rememberCoroutineScope()
+    var importResult by remember { mutableStateOf<ImportResult?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            viewModel.exportBackup { json ->
+                if (json == null) {
+                    Toast.makeText(context, "Impossibile creare il backup", Toast.LENGTH_LONG).show()
+                } else {
+                    scope.launch {
+                        val saved = writeBackupFile(context, uri, json)
+                        Toast.makeText(
+                            context,
+                            if (saved) "Backup salvato" else "Impossibile scrivere il file di backup",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val json = readBackupFile(context, uri)
+                if (json == null) {
+                    Toast.makeText(context, "Impossibile leggere il file", Toast.LENGTH_LONG).show()
+                } else {
+                    viewModel.importBackup(json) { result, error ->
+                        if (result != null) importResult = result
+                        else Toast.makeText(context, error ?: "Ripristino non riuscito", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+    fun shareOrExplain(title: String, text: String?, emptyMessage: String) {
+        if (text == null) Toast.makeText(context, emptyMessage, Toast.LENGTH_SHORT).show()
+        else shareText(context, title, text)
+    }
     var showWishSearch by remember { mutableStateOf(false) }
     var wishToMove by remember { mutableStateOf<WishlistCard?>(null) }
 
@@ -183,6 +234,24 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
             } else {
                 CenterAlignedTopAppBar(
                     title = { Text("POKÉMON VIRTUAL BINDER", fontWeight = FontWeight.Bold) },
+                    actions = {
+                        BackupMenu(
+                            onExport = {
+                                val day = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
+                                exportLauncher.launch("pokemon-binder-$day.json")
+                            },
+                            onImport = { importLauncher.launch(arrayOf("*/*")) },
+                            onShareDuplicates = {
+                                shareOrExplain("Carte doppie", ShareText.duplicates(allCards), "Non hai carte doppie")
+                            },
+                            onShareWishlist = {
+                                shareOrExplain("Wishlist", ShareText.wishlist(wishlist), "La wishlist è vuota")
+                            },
+                            onShareCollection = {
+                                shareOrExplain("La mia collezione", ShareText.collection(allCards, binders), "La collezione è vuota")
+                            }
+                        )
+                    },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 )
             }
@@ -479,6 +548,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     },
                     onDismiss = { wishToMove = null }
                 )
+            }
+
+            // Riepilogo del ripristino da backup
+            importResult?.let { result ->
+                ImportResultDialog(result = result, onDismiss = { importResult = null })
             }
 
             // Eliminazione delle carte selezionate

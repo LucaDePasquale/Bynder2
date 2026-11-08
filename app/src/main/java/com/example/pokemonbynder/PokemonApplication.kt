@@ -3,6 +3,7 @@ package com.example.pokemonbynder
 import android.app.Application
 import android.util.Log
 import androidx.room.Room
+import com.example.pokemonbynder.data.backup.BackupManager
 import com.example.pokemonbynder.data.local.AppDatabase
 import com.example.pokemonbynder.data.local.MIGRATION_1_2
 import com.example.pokemonbynder.data.local.MIGRATION_2_3
@@ -22,6 +23,7 @@ class PokemonApplication : Application() {
     lateinit var database: AppDatabase
     lateinit var catalogDatabase: CatalogDatabase
     lateinit var repository: PokemonRepository
+    lateinit var backupManager: BackupManager
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _catalogReady = MutableStateFlow(false)
@@ -42,6 +44,8 @@ class PokemonApplication : Application() {
             AppDatabase::class.java,
             "pokemon_binder_db"
         ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+
+        backupManager = BackupManager(database)
 
         catalogDatabase = Room.databaseBuilder(
             this,
