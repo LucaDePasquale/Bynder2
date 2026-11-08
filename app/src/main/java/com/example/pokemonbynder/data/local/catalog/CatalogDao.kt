@@ -29,6 +29,16 @@ interface CatalogDao {
     )
     suspend fun searchByName(query: String, limit: Int): List<CatalogCard>
 
+    /** Tutti i set del catalogo con quante carte contengono. */
+    @Query(
+        "SELECT lang, setCode, setName, COUNT(*) AS total FROM catalog_cards " +
+            "GROUP BY lang, setCode, setName ORDER BY setName, lang"
+    )
+    suspend fun sets(): List<CatalogSetRow>
+
+    @Query("SELECT * FROM catalog_cards WHERE lang = :lang AND setCode = :setCode")
+    suspend fun cardsOfSet(lang: String, setCode: String): List<CatalogCard>
+
     @Query("SELECT DISTINCT nameNorm FROM catalog_cards")
     suspend fun distinctNames(): List<String>
 }

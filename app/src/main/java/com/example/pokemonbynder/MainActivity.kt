@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.pokemonbynder.data.backup.ImportResult
 import com.example.pokemonbynder.data.backup.ShareText
+import com.example.pokemonbynder.data.stats.CardLanguage
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -144,6 +145,9 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
 
     // Backup su file e condivisione di liste
     val allCards by viewModel.allCards.collectAsState()
+    val filterLanguage by viewModel.filterLanguage.collectAsState()
+    val onlyDuplicates by viewModel.onlyDuplicates.collectAsState()
+    val languages = remember(allCards) { allCards.map { CardLanguage.of(it.id) }.distinct().sorted() }
     val scope = rememberCoroutineScope()
     var importResult by remember { mutableStateOf<ImportResult?>(null) }
 
@@ -263,7 +267,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     icon = { Icon(Icons.Default.Add, null) },
                     text = { Text("Aggiungi alla wishlist") }
                 )
-            } else if (catalogReady && !isScanning && candidates == null && !selecting) {
+            } else if (catalogReady && !isScanning && candidates == null && !selecting && tab == 0) {
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ExtendedFloatingActionButton(
                         onClick = { showManualSearch = true },
@@ -282,9 +286,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
-                TabRow(selectedTabIndex = tab) {
+                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                     Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Binder") })
                     Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Wishlist (${wishlist.size})") })
+                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Set") })
+                    Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Statistiche") })
                 }
 
                 if (tab == 1) {
@@ -300,6 +306,35 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                         },
                         onRefresh = {
                             viewModel.refreshWishlistPrices(wishlist) { found, checked ->
+                                Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    )
+                } else if (tab == 2) {
+                    SetsTab(
+                        catalogReady = catalogReady,
+                        ownedCards = allCards,
+                        loadSets = { viewModel.loadCatalogSets() },
+                        loadSetCards = { lang, code -> viewModel.loadSetCards(lang, code) },
+                        onAddToWishlist = { list ->
+                            viewModel.addToWishlistAll(list) { added ->
+                                val message = when {
+                                    added == null -> "Impossibile aggiungere alla wishlist"
+                                    added == 0 -> "Già nella wishlist"
+                                    added == 1 -> "1 carta aggiunta alla wishlist"
+                                    else -> "$added carte aggiunte alla wishlist"
+                                }
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                } else if (tab == 3) {
+                    StatsTab(
+                        cards = allCards,
+                        prices = prices,
+                        progress = priceProgress,
+                        onRefreshPrices = {
+                            viewModel.refreshBinderPrices(allCards) { found, checked ->
                                 Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
                             }
                         }
@@ -335,6 +370,14 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 }
 
                 CategoryFilterBar(selected = filterCategory, onSelect = { viewModel.setFilterCategory(it) })
+
+                ExtraFilterBar(
+                    languages = languages,
+                    selectedLanguage = filterLanguage,
+                    onLanguage = { viewModel.setFilterLanguage(it) },
+                    onlyDuplicates = onlyDuplicates,
+                    onOnlyDuplicates = { viewModel.setOnlyDuplicates(it) }
+                )
 
                 OutlinedTextField(
                     value = searchQuery,
@@ -739,7 +782,10 @@ fun EditCardDialog(
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(card.name, fontWeight = FontWeight.Bold)
-                Text("${card.set} · ${card.number}", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "${card.set} · ${card.number} · ${CardLanguage.label(CardLanguage.of(card.id))}",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Tipologia:")
                 Spacer(modifier = Modifier.height(4.dp))

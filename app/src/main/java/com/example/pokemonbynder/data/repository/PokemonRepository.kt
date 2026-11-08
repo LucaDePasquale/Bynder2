@@ -6,6 +6,7 @@ import com.example.pokemonbynder.data.local.PriceDao
 import com.example.pokemonbynder.data.local.WishlistDao
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.local.catalog.CatalogDao
+import com.example.pokemonbynder.data.local.catalog.CatalogSetRow
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.CardCondition
@@ -281,6 +282,18 @@ class PokemonRepository(
         pokemonDao.deleteCardsInBinder(id)
         binderDao.delete(id)
     }
+
+    /** Tutti i set del catalogo offline. */
+    suspend fun catalogSets(): List<CatalogSetRow> = catalogDao.sets()
+
+    /** Le carte di un set, in ordine di numero (1, 2, 10... e poi i numeri con lettere). */
+    suspend fun setCards(lang: String, setCode: String): List<CatalogCard> =
+        catalogDao.cardsOfSet(lang, setCode).sortedWith(compareBy({ numberRank(it.number) }, { it.number }))
+
+    /** Mette nella wishlist tutte le carte indicate; restituisce quante erano nuove. */
+    suspend fun addAllToWishlist(cards: List<CatalogCard>): Int = cards.count { addToWishlist(it) }
+
+    private fun numberRank(number: String): Int = number.takeWhile { it.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
 
     fun getCardsByArtist(artist: String) = pokemonDao.getCardsByArtist(artist)
 }

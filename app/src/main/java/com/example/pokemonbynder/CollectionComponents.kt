@@ -22,6 +22,7 @@ import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.CardCondition
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.model.WishlistCard
+import com.example.pokemonbynder.data.stats.CardLanguage
 import java.util.Locale
 
 /** Prezzo in euro, ad esempio "€ 1,20" (il separatore dipende dalla lingua del telefono). */
@@ -30,6 +31,7 @@ fun formatPrice(value: Double): String = String.format(Locale.getDefault(), "€
 /** Riga di dettagli sotto il nome: copie, condizione e prezzo (es. "×3 · NM · € 1,20 cad."). */
 fun cardDetailsLine(card: PokemonCard, price: Double?): String {
     val parts = ArrayList<String>()
+    parts.add(CardLanguage.short(CardLanguage.of(card.id)))
     if (card.quantity > 1) parts.add("×${card.quantity}")
     parts.add(card.condition.short)
     if (price != null) parts.add(formatPrice(price) + if (card.quantity > 1) " cad." else "")
@@ -160,7 +162,7 @@ private fun WishRow(wish: WishlistCard, price: Double?, onFound: () -> Unit, onR
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(wish.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${wish.set} · ${wish.number}",
+                    "${wish.set} · ${wish.number} · ${CardLanguage.short(CardLanguage.of(wish.id))}",
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

@@ -8,12 +8,14 @@ import com.example.pokemonbynder.data.backup.BackupException
 import com.example.pokemonbynder.data.backup.BackupManager
 import com.example.pokemonbynder.data.backup.ImportResult
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
+import com.example.pokemonbynder.data.local.catalog.CatalogSetRow
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.CardCondition
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.model.WishlistCard
 import com.example.pokemonbynder.data.repository.PokemonRepository
+import com.example.pokemonbynder.data.stats.CardLanguage
 import com.example.pokemonbynder.data.repository.toPriceRequest
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
@@ -102,22 +104,47 @@ class PokemonViewModel(
     /** Vero quando la carta in scelta arriva dalla ricerca manuale (e non dalla fotocamera). */
     private var addingManually = false
 
-    /**
-     * Carte da mostrare: nel binder scelto (o in tutti), con la tipologia scelta (o tutte),
-     * che contengono il testo cercato, nell'ordine scelto.
-     */
-    val cards: StateFlow<List<PokemonCard>> = combine(
-        repository.allCards,
+    /** Lingua usata come filtro ("it", "en"...); null = tutte. */
+    private val _filterLanguage = MutableStateFlow<String?>(null)
+    val filterLanguage: StateFlow<String?> = _filterLanguage.asStateFlow()
+
+    /** Se attivo mostra solo le carte con più di una copia. */
+    private val _onlyDuplicates = MutableStateFlow(false)
+    val onlyDuplicates: StateFlow<Boolean> = _onlyDuplicates.asStateFlow()
+
+    private data class Filters(
+        val binderId: Long?,
+        val category: CardCategory?,
+        val query: String,
+        val language: String?,
+        val onlyDuplicates: Boolean
+    )
+
+    private val filters = combine(
         _selectedBinderId,
         _filterCategory,
         _searchQuery,
+        _filterLanguage,
+        _onlyDuplicates
+    ) { binderId, category, query, language, duplicates ->
+        Filters(binderId, category, query.trim(), language, duplicates)
+    }
+
+    /**
+     * Carte da mostrare: nel binder scelto (o in tutti), con la tipologia e la lingua scelte (o tutte),
+     * che contengono il testo cercato e, se richiesto, solo le doppie, nell'ordine scelto.
+     */
+    val cards: StateFlow<List<PokemonCard>> = combine(
+        repository.allCards,
+        filters,
         _sortOrder
-    ) { allCards, binderId, category, query, order ->
-        val text = query.trim()
+    ) { allCards, f, order ->
         val filtered = allCards.filter {
-            (binderId == null || it.binderId == binderId) &&
-                (category == null || it.category == category) &&
-                (text.isEmpty() || it.matches(text))
+            (f.binderId == null || it.binderId == f.binderId) &&
+                (f.category == null || it.category == f.category) &&
+                (f.language == null || CardLanguage.of(it.id) == f.language) &&
+                (!f.onlyDuplicates || it.quantity > 1) &&
+                (f.query.isEmpty() || it.matches(f.query))
         }
         when (order) {
             // Il database le restituisce dalla più vecchia alla più nuova
@@ -492,6 +519,34 @@ class PokemonViewModel(
             } catch (e: Exception) {
                 Log.e("PokemonViewModel", "Spostamento dalla wishlist non riuscito", e)
                 onResult(false)
+            }
+        }
+    }
+
+    fun setFilterLanguage(language: String?) {
+        _filterLanguage.value = language
+    }
+
+    fun setOnlyDuplicates(only: Boolean) {
+        _onlyDuplicates.value = only
+    }
+
+    /** Tutti i set del catalogo offline (per la scheda "Set"). */
+    suspend fun loadCatalogSets(): List<CatalogSetRow> = repository.catalogSets()
+
+    /** Le carte di un set del catalogo, in ordine di numero. */
+    suspend fun loadSetCards(lang: String, setCode: String): List<CatalogCard> = repository.setCards(lang, setCode)
+
+    /** Mette nella wishlist le carte indicate; [onResult] riceve quante erano nuove, o null se c'è un errore. */
+    fun addToWishlistAll(cards: List<CatalogCard>, onResult: (Int?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(repository.addAllToWishlist(cards))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Aggiunta alla wishlist non riuscita", e)
+                onResult(null)
             }
         }
     }
