@@ -172,6 +172,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     var showSourceDialog by remember { mutableStateOf(false) }
     var showWishSearch by remember { mutableStateOf(false) }
     var showCatalogAdd by remember { mutableStateOf(false) }
+    var pickerSection by remember { mutableStateOf(0) }
+    var pendingBulk by remember { mutableStateOf<List<CatalogCard>?>(null) }
     var wishToMove by remember { mutableStateOf<WishlistCard?>(null) }
     var importResult by remember { mutableStateOf<ImportResult?>(null) }
     var showNewBinderDialog by remember { mutableStateOf(false) }
@@ -188,6 +190,21 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
 
     fun toggleSelected(card: PokemonCard) {
         selectedIds = if (card.id in selectedIds) selectedIds - card.id else selectedIds + card.id
+    }
+
+    val addCardToWishlist: (CatalogCard) -> Unit = { card ->
+        viewModel.addToWishlist(card) { added -> toastWishlist(context, added) }
+    }
+    val addCardsToWishlist: (List<CatalogCard>) -> Unit = { list ->
+        viewModel.addToWishlistAll(list) { added ->
+            val message = when {
+                added == null -> "Impossibile aggiungere alla wishlist"
+                added == 0 -> "Già nella wishlist"
+                added == 1 -> "1 carta aggiunta alla wishlist"
+                else -> "$added carte aggiunte alla wishlist"
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     val binderNames = binders.associate { it.id to it.name }
@@ -412,18 +429,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                     catalogReady = catalogReady,
                     ownedCards = allCards,
                     onAddToBinder = { viewModel.pickManualCard(it) },
-                    onWishlist = { card -> viewModel.addToWishlist(card) { added -> toastWishlist(context, added) } },
-                    onAddToWishlist = { list ->
-                        viewModel.addToWishlistAll(list) { added ->
-                            val message = when {
-                                added == null -> "Impossibile aggiungere alla wishlist"
-                                added == 0 -> "Già nella wishlist"
-                                added == 1 -> "1 carta aggiunta alla wishlist"
-                                else -> "$added carte aggiunte alla wishlist"
-                            }
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                        }
-                    },
+                    onWishlist = addCardToWishlist,
+                    onAddToWishlist = addCardsToWishlist,
                     section = catalogSection,
                     onSectionChange = { catalogSection = it }
                 )
@@ -593,26 +600,68 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                 )
             }
 
-            // Wishlist: cerca le carte da aggiungere (il dialog resta aperto per aggiungerne più d'una)
+            // Wishlist: catalogo a tutto schermo (ricerca per nome, numero, autore e set)
             if (showWishSearch) {
-                ManualSearchDialog(
-                    title = "Aggiungi alla wishlist",
-                    onSearch = { text, byArtist, onResult -> viewModel.searchCatalog(text, byArtist, onResult) },
-                    onPick = { card -> viewModel.addToWishlist(card) { added -> toastWishlist(context, added) } },
-                    onDismiss = { showWishSearch = false }
-                )
+                CatalogPickerDialog(title = "Aggiungi alla wishlist", onDismiss = { showWishSearch = false }) {
+                    CatalogPage(
+                        viewModel = viewModel,
+                        catalogReady = catalogReady,
+                        ownedCards = allCards,
+                        onAddToBinder = { viewModel.pickManualCard(it) },
+                        onWishlist = addCardToWishlist,
+                        onAddToWishlist = addCardsToWishlist,
+                        section = pickerSection,
+                        onSectionChange = { pickerSection = it }
+                    )
+                }
             }
 
-            // Aggiunta senza scansione: si cerca nel catalogo e si sceglie tipologia, condizione e binder
+            // Binder: aggiunta senza scansione, una carta o tutte le mancanti di un set
             if (showCatalogAdd) {
-                ManualSearchDialog(
-                    title = "Aggiungi al binder",
-                    onSearch = { text, byArtist, onResult -> viewModel.searchCatalog(text, byArtist, onResult) },
-                    onPick = { card ->
-                        showCatalogAdd = false
-                        viewModel.pickManualCard(card)
+                CatalogPickerDialog(title = "Aggiungi al binder", onDismiss = { showCatalogAdd = false }) {
+                    CatalogPage(
+                        viewModel = viewModel,
+                        catalogReady = catalogReady,
+                        ownedCards = allCards,
+                        onAddToBinder = { viewModel.pickManualCard(it) },
+                        onWishlist = addCardToWishlist,
+                        onAddToWishlist = { list ->
+                            if (list.size == 1) {
+                                viewModel.pickManualCard(list[0])
+                            } else {
+                                pendingBulk = list
+                            }
+                        },
+                        section = pickerSection,
+                        onSectionChange = { pickerSection = it },
+                        forBinder = true
+                    )
+                }
+            }
+
+            // Conferma prima di aggiungere molte carte insieme
+            pendingBulk?.let { list ->
+                val target = binderNames[defaultBinderId] ?: "il binder"
+                AlertDialog(
+                    onDismissRequest = { pendingBulk = null },
+                    title = { Text("Aggiungere ${list.size} carte?") },
+                    text = {
+                        Text(
+                            "Le ${list.size} carte vanno in «$target», una copia ciascuna, tipologia Normale e condizione " +
+                                "${settings.defaultCondition.label}. Potrai modificarle una per una."
+                        )
                     },
-                    onDismiss = { showCatalogAdd = false }
+                    confirmButton = {
+                        Button(onClick = {
+                            pendingBulk = null
+                            viewModel.addAllToBinder(list, defaultBinderId, settings.defaultCondition) { added ->
+                                val message = if (added == null) "Impossibile aggiungere le carte"
+                                else "$added carte aggiunte a «$target»"
+                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                            }
+                        }) { Text("Aggiungi") }
+                    },
+                    dismissButton = { TextButton(onClick = { pendingBulk = null }) { Text("Annulla") } }
                 )
             }
 

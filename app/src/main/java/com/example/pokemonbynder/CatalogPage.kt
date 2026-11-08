@@ -43,7 +43,8 @@ fun CatalogPage(
     onWishlist: (CatalogCard) -> Unit,
     onAddToWishlist: (List<CatalogCard>) -> Unit,
     section: Int,
-    onSectionChange: (Int) -> Unit
+    onSectionChange: (Int) -> Unit,
+    forBinder: Boolean = false
 ) {
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -65,8 +66,31 @@ fun CatalogPage(
                 ownedCards = ownedCards,
                 loadSets = { viewModel.loadCatalogSets() },
                 loadSetCards = { lang, code -> viewModel.loadSetCards(lang, code) },
-                onAddToWishlist = onAddToWishlist
+                onAddToWishlist = onAddToWishlist,
+                action = if (forBinder) BINDER_SET_ACTION else WISHLIST_SET_ACTION
             )
+        }
+    }
+}
+
+/**
+ * Catalogo a tutto schermo con ricerca e set, aperto da un binder o dalla wishlist per aggiungere carte
+ * senza scansionarle. Resta aperto: si possono aggiungere più carte di seguito.
+ */
+@Composable
+fun CatalogPickerDialog(title: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Chiudi") }
+                }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) { content() }
+            }
         }
     }
 }

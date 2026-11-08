@@ -152,6 +152,12 @@ class PokemonRepository(
         )
     )
 
+    /** Aggiunge molte carte a un binder (una copia ciascuna, tipologia Normale); restituisce quante. */
+    suspend fun addAllToBinder(cards: List<CatalogCard>, binderId: Long, condition: CardCondition): Int {
+        cards.forEach { saveCardToBinder(it, CardCategory.NORMAL, binderId, condition) }
+        return cards.size
+    }
+
     private suspend fun addEntry(entry: PokemonCard): Int {
         val existing = pokemonDao.getById(entry.id)
         val quantity = (existing?.quantity ?: 0) + 1

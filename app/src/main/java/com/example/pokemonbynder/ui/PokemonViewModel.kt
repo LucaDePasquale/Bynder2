@@ -589,6 +589,20 @@ class PokemonViewModel(
         }
     }
 
+    /** Aggiunge molte carte del catalogo a un binder in un colpo solo; [onResult] riceve null se fallisce. */
+    fun addAllToBinder(cards: List<CatalogCard>, binderId: Long, condition: CardCondition, onResult: (Int?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(repository.addAllToBinder(cards, binderId, condition))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Aggiunta di più carte al binder non riuscita", e)
+                onResult(null)
+            }
+        }
+    }
+
     fun setFilterCategory(category: CardCategory?) {
         _filterCategory.value = category
     }

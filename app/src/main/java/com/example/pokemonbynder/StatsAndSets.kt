@@ -70,6 +70,16 @@ fun ExtraFilterBar(
 // Completamento dei set
 // ---------------------------------------------------------------------------------------------
 
+/** Cosa fanno i pulsanti dell'elenco di un set: nella wishlist o in un binder. */
+class SetAction(
+    val bulkLabel: (Int) -> String,
+    val singleLabel: String,
+    val allowOwned: Boolean
+)
+
+val WISHLIST_SET_ACTION = SetAction({ "Mancanti in wishlist ($it)" }, "+ Wishlist", false)
+val BINDER_SET_ACTION = SetAction({ "Aggiungi mancanti ($it)" }, "+ Aggiungi", true)
+
 /**
  * Scheda "Set": elenco dei set del catalogo con quante carte possiedi; toccando un set si vedono
  * le carte che hai e quelle che mancano, che si possono mettere nella wishlist.
@@ -81,7 +91,8 @@ fun SetsTab(
     ownedCards: List<PokemonCard>,
     loadSets: suspend () -> List<CatalogSetRow>,
     loadSetCards: suspend (String, String) -> List<CatalogCard>,
-    onAddToWishlist: (List<CatalogCard>) -> Unit
+    onAddToWishlist: (List<CatalogCard>) -> Unit,
+    action: SetAction = WISHLIST_SET_ACTION
 ) {
     var sets by remember { mutableStateOf<List<CatalogSetRow>?>(null) }
     var failed by remember { mutableStateOf(false) }
@@ -109,7 +120,8 @@ fun SetsTab(
             owned = owned,
             loadSetCards = loadSetCards,
             onBack = { open = null },
-            onAddToWishlist = onAddToWishlist
+            onAddToWishlist = onAddToWishlist,
+            action = action
         )
         return
     }
@@ -200,7 +212,8 @@ private fun SetDetail(
     owned: OwnedIndex,
     loadSetCards: suspend (String, String) -> List<CatalogCard>,
     onBack: () -> Unit,
-    onAddToWishlist: (List<CatalogCard>) -> Unit
+    onAddToWishlist: (List<CatalogCard>) -> Unit,
+    action: SetAction
 ) {
     BackHandler(enabled = true) { onBack() }
 
@@ -242,7 +255,7 @@ private fun SetDetail(
                 FilterChip(selected = onlyMissing, onClick = { onlyMissing = !onlyMissing }, label = { Text("Solo mancanti") })
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(onClick = { onAddToWishlist(missing) }, enabled = missing.isNotEmpty()) {
-                    Text("Mancanti in wishlist (${missing.size})")
+                    Text(action.bulkLabel(missing.size))
                 }
             }
         }
@@ -271,8 +284,9 @@ private fun SetDetail(
                         }
                         if (isOwned) {
                             Text("✓ Ce l'hai", style = MaterialTheme.typography.labelMedium)
-                        } else {
-                            TextButton(onClick = { onAddToWishlist(listOf(card)) }) { Text("+ Wishlist") }
+                        }
+                        if (!isOwned || action.allowOwned) {
+                            TextButton(onClick = { onAddToWishlist(listOf(card)) }) { Text(action.singleLabel) }
                         }
                     }
                 }
