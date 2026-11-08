@@ -2,6 +2,7 @@ package com.example.pokemonbynder.backup
 
 import com.example.pokemonbynder.data.backup.ShareText
 import com.example.pokemonbynder.data.model.Binder
+import com.example.pokemonbynder.data.model.CardCategory
 import com.example.pokemonbynder.data.model.CardCondition
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.model.WishlistCard
@@ -14,9 +15,8 @@ class ShareTextTest {
 
     private fun card(id: String, name: String, quantity: Int, binderId: Long = 1, set: String = "Base Set") = PokemonCard(
         id = id, name = name, supertype = "Pokémon", subtypes = emptyList(), number = "58", artist = null,
-        rarity = null, imageUrl = "", set = set, binderId = binderId, quantity = quantity,
-        condition = CardCondition.NEAR_MINT,
-        category = "Pokémon"
+        rarity = null, imageUrl = "", set = set, category = CardCategory.NORMAL, binderId = binderId, quantity = quantity,
+        condition = CardCondition.NEAR_MINT
     )
 
     @Test
