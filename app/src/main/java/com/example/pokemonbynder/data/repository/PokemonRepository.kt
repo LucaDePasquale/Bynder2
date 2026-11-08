@@ -21,6 +21,7 @@ import com.example.pokemonbynder.data.remote.TcgdexClient
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.CardMatcher
 import com.example.pokemonbynder.scanner.CardText
+import com.example.pokemonbynder.scanner.CatalogQueryParser
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +47,8 @@ class PokemonRepository(
         private const val NAME_MIN_SIMILARITY = 0.75
         private const val NAME_MAX_LENGTH_DIFF = 3
         private const val NAMES_PER_LINE = 8
-        private const val MANUAL_SEARCH_LIMIT = 40
+        private const val MANUAL_SEARCH_LIMIT = 60
+        private const val ARTIST_SEARCH_LIMIT = 120
     }
 
     val allCards: Flow<List<PokemonCard>> = pokemonDao.getAllCards()
@@ -256,11 +258,15 @@ class PokemonRepository(
         }
     }
 
-    /** Ricerca manuale nel catalogo offline (per quando la scansione non riconosce la carta). */
-    suspend fun searchCatalog(text: String): List<CatalogCard> {
-        val query = CardText.normalizeName(text)
-        if (query.length < 2) return emptyList()
-        return catalogDao.searchByName(query, MANUAL_SEARCH_LIMIT)
+    /**
+     * Ricerca manuale nel catalogo offline. Per nome si può aggiungere il numero ("Pikachu 25")
+     * o numero e carte del set ("Pikachu 25/102"); con [byArtist] il testo è il nome dell'autore.
+     */
+    suspend fun searchCatalog(text: String, byArtist: Boolean = false): List<CatalogCard> {
+        val query = CatalogQueryParser.parse(text, byArtist)
+        if (!query.isSearchable) return emptyList()
+        val limit = if (byArtist) ARTIST_SEARCH_LIMIT else MANUAL_SEARCH_LIMIT
+        return catalogDao.search(query.name, query.artist, query.numberKey, query.total, limit)
     }
 
     /** Con un'installazione nuova non c'è nessun binder: si crea quello di partenza. */

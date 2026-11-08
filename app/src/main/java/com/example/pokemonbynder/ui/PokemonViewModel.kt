@@ -18,6 +18,7 @@ import com.example.pokemonbynder.data.repository.PokemonRepository
 import com.example.pokemonbynder.data.stats.CardLanguage
 import com.example.pokemonbynder.data.repository.toPriceRequest
 import com.example.pokemonbynder.scanner.Candidate
+import com.example.pokemonbynder.scanner.PrintedNumber
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
 import kotlinx.coroutines.CancellationException
@@ -44,6 +45,13 @@ class PokemonViewModel(
         /** Quante letture recenti si ricordano per verificare che la carta sia stabile. */
         private const val RECENT_READINGS = 3
         private const val MIN_AGREEING_READINGS = 2
+
+        /** Un numero letto in un fotogramma resta valido per questo tempo, se il fotogramma dopo non lo legge. */
+        private const val NUMBER_MEMORY_MS = 1_500L
+
+        /** Quanti fotogrammi recenti contribuiscono alla lista dei nomi letti, e quanti nomi al massimo. */
+        private const val NAME_MEMORY_FRAMES = 3
+        private const val MAX_MERGED_NAMES = 5
 
         /** Dopo questo tempo si mostrano comunque i candidati migliori, anche se non sicuri. */
         private const val FALLBACK_AFTER_MS = 4_000L
@@ -167,6 +175,9 @@ class PokemonViewModel(
     private val isProcessing = AtomicBoolean(false)
     private val recentTops = ArrayDeque<String>()
     private var scanStartedAt = 0L
+    private var lastNumber: PrintedNumber? = null
+    private var lastNumberAt = 0L
+    private val recentNameLines = ArrayDeque<List<String>>()
     private var lastOnlineRequestAt = 0L
 
     fun setScanSource(source: ScanSource) {
@@ -183,9 +194,31 @@ class PokemonViewModel(
             _candidates.value = null
             _scanError.value = null
             recentTops.clear()
+            lastNumber = null
+            recentNameLines.clear()
             lastOnlineRequestAt = 0L
             scanStartedAt = SystemClock.elapsedRealtime()
         }
+    }
+
+    /**
+     * Unisce la lettura con quelle degli ultimi fotogrammi: l'OCR spesso perde il numero o un nome
+     * per un attimo (riflessi, mano che trema), quindi si tiene l'ultimo numero letto da poco
+     * e i nomi visti negli ultimi fotogrammi.
+     */
+    private fun mergeWithRecent(reading: ScanReading, now: Long): ScanReading {
+        val readNumber = reading.number
+        if (readNumber != null) {
+            lastNumber = readNumber
+            lastNumberAt = now
+        }
+        val number = readNumber ?: lastNumber?.takeIf { now - lastNumberAt <= NUMBER_MEMORY_MS }
+
+        recentNameLines.addLast(reading.nameLines)
+        while (recentNameLines.size > NAME_MEMORY_FRAMES) recentNameLines.removeFirst()
+        val names = (reading.nameLines + recentNameLines.flatten()).distinct().take(MAX_MERGED_NAMES)
+
+        return reading.copy(nameLines = names, number = number)
     }
 
     /** Chiamato dall'analizzatore della fotocamera a ogni lettura riuscita. */
@@ -193,6 +226,7 @@ class PokemonViewModel(
         if (!_isScanning.value || _candidates.value != null) return
         val source = _scanSource.value
         val now = SystemClock.elapsedRealtime()
+        val merged = mergeWithRecent(reading, now)
         // Online le richieste sono limitate: al massimo una ogni 1,5 secondi.
         if (source == ScanSource.TCGDEX && now - lastOnlineRequestAt < ONLINE_MIN_INTERVAL_MS) return
         if (!isProcessing.compareAndSet(false, true)) return // una ricerca alla volta
@@ -200,7 +234,7 @@ class PokemonViewModel(
 
         viewModelScope.launch {
             try {
-                val match = repository.findCandidates(reading, source)
+                val match = repository.findCandidates(merged, source)
                 val top = match.candidates.firstOrNull() ?: return@launch
                 if (!_isScanning.value) return@launch // chiuso nel frattempo
 
@@ -359,10 +393,13 @@ class PokemonViewModel(
     }
 
     /** Ricerca manuale nel catalogo; [onResult] riceve null se la ricerca è fallita. */
-    fun searchCatalog(text: String, onResult: (List<CatalogCard>?) -> Unit) {
+    fun searchCatalog(text: String, onResult: (List<CatalogCard>?) -> Unit) = searchCatalog(text, false, onResult)
+
+    /** Come sopra; con [byArtist] il testo è il nome dell'autore della carta. */
+    fun searchCatalog(text: String, byArtist: Boolean, onResult: (List<CatalogCard>?) -> Unit) {
         viewModelScope.launch {
             try {
-                onResult(repository.searchCatalog(text))
+                onResult(repository.searchCatalog(text, byArtist))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

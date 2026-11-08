@@ -71,6 +71,25 @@ fun CatalogPage(
     }
 }
 
+/** Scelta di cosa si cerca: il nome della carta (con numero opzionale) oppure l'autore. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SearchModeChips(byArtist: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        FilterChip(selected = !byArtist, onClick = { onChange(false) }, label = { Text("Nome e numero") })
+        FilterChip(selected = byArtist, onClick = { onChange(true) }, label = { Text("Autore") })
+    }
+}
+
+/** Suggerimento sotto il campo di ricerca, diverso a seconda di cosa si cerca. */
+fun searchHint(byArtist: Boolean): String =
+    if (byArtist) "Scrivi il nome dell'illustratore (es. Mitsuhiro Arita) per vedere le sue carte."
+    else "Scrivi il nome della carta. Puoi aggiungere il numero (Pikachu 25) o anche le carte del set (Pikachu 25/102)."
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CatalogSearch(
@@ -85,11 +104,12 @@ private fun CatalogSearch(
     var failed by remember { mutableStateOf(false) }
     var searched by remember { mutableStateOf(false) }
     var language by remember { mutableStateOf<String?>(null) }
+    var byArtist by rememberSaveable { mutableStateOf(false) }
     var preview by remember { mutableStateOf<CatalogCard?>(null) }
     val owned = remember(ownedCards) { OwnedIndex(ownedCards) }
 
     // Si cerca dopo una breve pausa nella digitazione; le risposte vecchie vengono ignorate.
-    LaunchedEffect(query, catalogReady) {
+    LaunchedEffect(query, catalogReady, byArtist) {
         val text = query.trim()
         if (text.length < 2 || !catalogReady) {
             results = emptyList()
@@ -98,7 +118,7 @@ private fun CatalogSearch(
             return@LaunchedEffect
         }
         delay(300)
-        viewModel.searchCatalog(text) { found ->
+        viewModel.searchCatalog(text, byArtist) { found ->
             if (text == query.trim()) {
                 failed = found == null
                 results = found.orEmpty()
@@ -114,7 +134,7 @@ private fun CatalogSearch(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Nome della carta (es. Pikachu)") },
+            placeholder = { Text(if (byArtist) "Autore (es. Arita)" else "Nome e numero (es. Pikachu 25/102)") },
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
             trailingIcon = {
@@ -126,6 +146,9 @@ private fun CatalogSearch(
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
         )
+
+        SearchModeChips(byArtist = byArtist, onChange = { byArtist = it })
+        Spacer(modifier = Modifier.height(4.dp))
 
         if (languages.size > 1) {
             Row(
@@ -147,7 +170,7 @@ private fun CatalogSearch(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val message = when {
                 !catalogReady -> "Il catalogo si sta preparando…"
-                query.trim().length < 2 -> "Scrivi almeno 2 lettere per cercare tra le carte del catalogo, in italiano e in inglese."
+                query.trim().length < 2 -> searchHint(byArtist) + "\nLa ricerca copre il catalogo in italiano e in inglese."
                 failed -> "Errore nella ricerca nel catalogo."
                 searched && shown.isEmpty() -> "Nessuna carta trovata."
                 else -> null
@@ -167,7 +190,7 @@ private fun CatalogSearch(
                 ) {
                     items(shown, key = { it.catalogKey }) { card ->
                         val numbers = owned.numbersFor(card.lang, card.setCode, card.setName)
-                        CatalogResult(card = card, isOwned = owned.isOwned(numbers, card.number), onClick = { preview = card })
+                        CatalogResult(card = card, isOwned = owned.isOwned(numbers, card.number), showArtist = byArtist, onClick = { preview = card })
                     }
                 }
             }
@@ -190,7 +213,7 @@ private fun CatalogSearch(
 }
 
 @Composable
-private fun CatalogResult(card: CatalogCard, isOwned: Boolean, onClick: () -> Unit) {
+private fun CatalogResult(card: CatalogCard, isOwned: Boolean, showArtist: Boolean, onClick: () -> Unit) {
     val total = if (card.setTotal > 0) "/${card.setTotal}" else ""
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -219,6 +242,9 @@ private fun CatalogResult(card: CatalogCard, isOwned: Boolean, onClick: () -> Un
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (showArtist && !card.artist.isNullOrBlank()) {
+                    Text(card.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 if (isOwned) {
                     Text("✓ Ce l'hai", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }

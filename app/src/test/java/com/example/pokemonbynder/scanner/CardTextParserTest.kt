@@ -114,4 +114,18 @@ class CardTextParserTest {
 
         assertEquals("en", reading!!.languageHint)
     }
+
+    @Test
+    fun readsNumberWhenTheSlashIsMissing() {
+        val reading = CardTextParser.parse(
+            listOf(
+                line("Pikachu", 130, 215, 300, 250),
+                line("025 165", 130, 700, 200, 720)
+            ),
+            guide
+        )
+
+        assertEquals("25", reading!!.number?.key)
+        assertEquals(165, reading.number?.total)
+    }
 }

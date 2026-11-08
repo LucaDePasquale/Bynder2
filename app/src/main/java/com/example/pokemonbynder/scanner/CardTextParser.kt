@@ -44,6 +44,9 @@ object CardTextParser {
     // Promo senza totale: "SWSH193", "SVP 045"
     private val promoNumber = Regex("""(?<![A-Za-z0-9])(SWSH|SVP|SM|XY|BW|HGSS|DP)\s?-?\s?([0-9]{2,3})(?![0-9])""")
 
+    // "025 165" (la barra non è stata letta): ammesso solo nella fascia bassa della carta
+    private val spacedNumber = Regex("""(?<![0-9OoIl])([0-9OoIl]{3})\s+([0-9OoIl]{3})(?![0-9OoIl])""")
+
     private val hitPoints = Regex("""(?:HP|PS)\s?\d{2,3}\b""", RegexOption.IGNORE_CASE)
     private val keepLettersDigitsAndNameSymbols = Regex("""[^\p{L}\p{N}'’&.\- ]""")
     private val manySpaces = Regex("""\s+""")
@@ -71,7 +74,7 @@ object CardTextParser {
             .take(MAX_NAME_LINES)
 
         val bottom = inside.filter { it.box.centerY >= numberStart }
-        val number = findNumber(bottom) ?: findNumber(inside)
+        val number = findNumber(bottom, allowSpaced = true) ?: findNumber(inside)
 
         if (nameLines.isEmpty() && number == null) return null
         return ScanReading(nameLines, number, detectLanguage(inside))
@@ -83,7 +86,7 @@ object CardTextParser {
         return if (cleaned.count { it.isLetter() } >= 3) cleaned else null
     }
 
-    internal fun findNumber(lines: List<OcrLine>): PrintedNumber? {
+    internal fun findNumber(lines: List<OcrLine>, allowSpaced: Boolean = false): PrintedNumber? {
         for (line in lines) {
             val match = slashNumber.find(line.text) ?: continue
             val prefix = match.groupValues[1]
@@ -105,6 +108,15 @@ object CardTextParser {
                 total = 0,
                 raw = match.value
             )
+        }
+        if (allowSpaced) {
+            for (line in lines) {
+                val match = spacedNumber.find(line.text) ?: continue
+                val digits = fixDigits(match.groupValues[1])
+                val total = fixDigits(match.groupValues[2]).toIntOrNull() ?: continue
+                if (digits.toIntOrNull() == null || total < 20) continue
+                return PrintedNumber(key = CardText.normalizeNumber(digits), total = total, raw = match.value)
+            }
         }
         return null
     }

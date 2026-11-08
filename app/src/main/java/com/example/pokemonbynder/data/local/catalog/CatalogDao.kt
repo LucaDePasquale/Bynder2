@@ -29,6 +29,21 @@ interface CatalogDao {
     )
     suspend fun searchByName(query: String, limit: Int): List<CatalogCard>
 
+    /**
+     * Ricerca flessibile: ogni criterio vuoto (testo vuoto, 0) viene ignorato.
+     * Il nome è già normalizzato; l'autore si cerca come testo contenuto; numero e totale devono coincidere.
+     */
+    @Query(
+        "SELECT * FROM catalog_cards WHERE " +
+            "(:name = '' OR nameNorm LIKE '%' || :name || '%') AND " +
+            "(:artist = '' OR artist LIKE '%' || :artist || '%') AND " +
+            "(:numberKey = '' OR numberKey = :numberKey) AND " +
+            "(:total = 0 OR setTotal = :total) " +
+            "ORDER BY CASE WHEN :name != '' AND nameNorm LIKE :name || '%' THEN 0 ELSE 1 END, nameNorm, setName, lang DESC " +
+            "LIMIT :limit"
+    )
+    suspend fun search(name: String, artist: String, numberKey: String, total: Int, limit: Int): List<CatalogCard>
+
     /** Tutti i set del catalogo con quante carte contengono. */
     @Query(
         "SELECT lang, setCode, setName, COUNT(*) AS total FROM catalog_cards " +

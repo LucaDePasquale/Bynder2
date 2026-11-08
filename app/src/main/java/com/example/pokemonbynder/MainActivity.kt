@@ -464,6 +464,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                 ScannerOverlay(
                     sourceLabel = scanSource.label,
                     onReading = { reading -> viewModel.onReading(reading) },
+                    onManual = {
+                        viewModel.setScanning(false)
+                        catalogSection = 0
+                        goTo(AppScreen.CATALOG)
+                    },
                     onClose = { viewModel.setScanning(false) }
                 )
             }
@@ -575,7 +580,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
             if (showWishSearch) {
                 ManualSearchDialog(
                     title = "Aggiungi alla wishlist",
-                    onSearch = { text, onResult -> viewModel.searchCatalog(text, onResult) },
+                    onSearch = { text, byArtist, onResult -> viewModel.searchCatalog(text, byArtist, onResult) },
                     onPick = { card -> viewModel.addToWishlist(card) { added -> toastWishlist(context, added) } },
                     onDismiss = { showWishSearch = false }
                 )
@@ -1047,7 +1052,7 @@ private class PreviewHolder {
 }
 
 @Composable
-fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClose: () -> Unit) {
+fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onManual: () -> Unit, onClose: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -1066,6 +1071,8 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClos
         )
     }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var torchOn by remember { mutableStateOf(false) }
 
     // Quando il riquadro si chiude, spegne davvero la fotocamera e libera le risorse.
     DisposableEffect(Unit) {
@@ -1121,7 +1128,7 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClos
                         }
                     try {
                         provider.unbindAll()
-                        provider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analysis)
+                        camera = provider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analysis)
                     } catch (e: Exception) {
                         Log.e("Scanner", "Error", e)
                         Toast.makeText(context, "Errore fotocamera", Toast.LENGTH_SHORT).show()
@@ -1159,6 +1166,22 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClos
                 .padding(8.dp)
         )
 
+        Row(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (camera?.cameraInfo?.hasFlashUnit() == true) {
+                Button(onClick = {
+                    torchOn = !torchOn
+                    camera?.cameraControl?.enableTorch(torchOn)
+                }) { Text(if (torchOn) "Spegni torcia" else "Torcia") }
+            }
+            Button(
+                onClick = onManual,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.6f), contentColor = Color.White)
+            ) { Text("Cerca a mano") }
+        }
+
         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
             Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(32.dp))
         }
@@ -1182,11 +1205,12 @@ fun toastWishlist(context: Context, added: Boolean?) {
 }
 
 
-/** Ricerca per nome nel catalogo offline; il risultato scelto passa al dialog di tipologia e binder. */
+/** Ricerca per nome (con numero) o per autore nel catalogo offline; il risultato scelto passa al dialog successivo. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManualSearchDialog(
     title: String = "Cerca una carta",
-    onSearch: (String, (List<CatalogCard>?) -> Unit) -> Unit,
+    onSearch: (String, Boolean, (List<CatalogCard>?) -> Unit) -> Unit,
     onPick: (CatalogCard) -> Unit,
     onWish: ((CatalogCard) -> Unit)? = null,
     onDismiss: () -> Unit
@@ -1195,9 +1219,10 @@ fun ManualSearchDialog(
     var results by remember { mutableStateOf<List<CatalogCard>>(emptyList()) }
     var failed by remember { mutableStateOf(false) }
     var searched by remember { mutableStateOf(false) }
+    var byArtist by remember { mutableStateOf(false) }
 
     // Si cerca dopo una breve pausa nella digitazione; le risposte vecchie vengono ignorate.
-    LaunchedEffect(query) {
+    LaunchedEffect(query, byArtist) {
         val text = query.trim()
         if (text.length < 2) {
             results = emptyList()
@@ -1206,7 +1231,7 @@ fun ManualSearchDialog(
             return@LaunchedEffect
         }
         delay(300)
-        onSearch(text) { found ->
+        onSearch(text, byArtist) { found ->
             if (text == query.trim()) {
                 failed = found == null
                 results = found.orEmpty()
@@ -1223,14 +1248,19 @@ fun ManualSearchDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("Nome della carta") },
+                    label = { Text(if (byArtist) "Autore (es. Arita)" else "Nome e numero (es. Pikachu 25/102)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !byArtist, onClick = { byArtist = false }, label = { Text("Nome e numero") })
+                    FilterChip(selected = byArtist, onClick = { byArtist = true }, label = { Text("Autore") })
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Column(modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
                     when {
-                        query.trim().length < 2 -> Text("Scrivi almeno 2 lettere.", style = MaterialTheme.typography.bodySmall)
+                        query.trim().length < 2 -> Text(searchHint(byArtist), style = MaterialTheme.typography.bodySmall)
                         failed -> Text("Errore nella ricerca nel catalogo.", style = MaterialTheme.typography.bodySmall)
                         searched && results.isEmpty() -> Text("Nessuna carta trovata.", style = MaterialTheme.typography.bodySmall)
                         else -> results.forEach { card ->
@@ -1251,6 +1281,9 @@ fun ManualSearchDialog(
                                         "${card.setName} · ${card.number}$total · ${card.lang.uppercase()}",
                                         style = MaterialTheme.typography.bodySmall
                                     )
+                                    if (byArtist && !card.artist.isNullOrBlank()) {
+                                        Text(card.artist, style = MaterialTheme.typography.bodySmall)
+                                    }
                                 }
                                 if (onWish != null) {
                                     TextButton(onClick = { onWish(card) }) { Text("Wishlist") }
