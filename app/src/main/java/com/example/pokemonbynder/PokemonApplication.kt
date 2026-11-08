@@ -60,7 +60,8 @@ class PokemonApplication : Application() {
             catalogDatabase.catalogDao(),
             database.binderDao(),
             database.wishlistDao(),
-            database.priceDao()
+            database.priceDao(),
+            loadSetPairs = { CatalogImporter.readSetPairs(this) }
         )
 
         // Con un'installazione nuova non c'è ancora nessun binder: si crea quello di partenza.
@@ -76,6 +77,7 @@ class PokemonApplication : Application() {
             try {
                 CatalogImporter(this@PokemonApplication, catalogDatabase).importIfNeeded()
                 _catalogReady.value = true
+                repository.repairMissingImages()
             } catch (e: Exception) {
                 Log.e("PokemonApplication", "Importazione del catalogo non riuscita", e)
                 _catalogError.value = "${e.javaClass.simpleName}: ${e.message}"

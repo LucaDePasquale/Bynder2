@@ -25,7 +25,9 @@ import com.example.pokemonbynder.scanner.CatalogQueryParser
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
 import kotlinx.coroutines.Dispatchers
+import com.example.pokemonbynder.data.stats.CardLanguage
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
@@ -40,7 +42,8 @@ class PokemonRepository(
     private val binderDao: BinderDao,
     private val wishlistDao: WishlistDao,
     private val priceDao: PriceDao,
-    private val tcgdex: TcgdexClient = TcgdexClient()
+    private val tcgdex: TcgdexClient = TcgdexClient(),
+    private val loadSetPairs: () -> Map<String, String> = { emptyMap() }
 ) {
     companion object {
         private const val MAX_CANDIDATES = 6
@@ -162,27 +165,69 @@ class PokemonRepository(
         return quantity
     }
 
+    private val setPairs: Map<String, String> by lazy { loadSetPairs() }
+
     /**
-     * Cambia tipologia, quantità, condizione e/o binder di una carta già salvata.
-     * Per spostarla si crea la riga nel nuovo binder e poi si toglie la vecchia: se nel nuovo binder
-     * la stessa carta c'è già, le copie si sommano e non si crea un doppione.
+     * La stessa carta nell'altra lingua (con nome, immagine e set di quella lingua), oppure null
+     * se nel catalogo non c'è. I set italiani e inglesi si collegano con assets/set_pairs.tsv.
+     */
+    suspend fun findTwin(card: PokemonCard, targetLang: String): CatalogCard? {
+        val key = CardEntryId.catalogKeyOf(card.id)
+        val lang = key.substringBefore(':')
+        if (lang == targetLang) return null
+        val setCode = key.substringAfter(':', "").substringBeforeLast(':', "")
+        val number = CardText.normalizeNumber(key.substringAfterLast(':'))
+
+        var pairCode = setPairs["$lang:$setCode"]
+        if (pairCode == null) {
+            // Carte salvate da TCGdex: il codice del set può essere diverso, si prova con il nome
+            val wanted = CardText.normalizeName(card.set)
+            val own = catalogDao.sets().firstOrNull { it.lang == lang && CardText.normalizeName(it.setName) == wanted }
+            pairCode = own?.let { setPairs["$lang:${it.setCode}"] }
+        }
+        if (pairCode == null) return null
+        return catalogDao.cardsOfSet(targetLang, pairCode).firstOrNull { it.numberKey == number }
+    }
+
+    /**
+     * Cambia tipologia, quantità, condizione, binder e/o lingua di una carta già salvata.
+     * Per spostarla (o cambiarle lingua) si crea la riga nuova e poi si toglie la vecchia: se la carta
+     * c'è già nella nuova posizione le copie si sommano e non si crea un doppione.
+     * Cambiando lingua la carta diventa quella corrispondente nell'altra lingua, con la sua immagine.
+     *
+     * @return false se la lingua richiesta non è disponibile nel catalogo (il resto viene salvato)
      */
     suspend fun updateCard(
         card: PokemonCard,
         category: CardCategory,
         binderId: Long,
         quantity: Int,
-        condition: CardCondition
-    ) {
+        condition: CardCondition,
+        language: String? = null
+    ): Boolean {
         val copies = quantity.coerceAtLeast(1)
-        if (binderId == card.binderId) {
+        val wantsOtherLanguage = language != null && language != CardLanguage.of(card.id)
+        val twin = if (wantsOtherLanguage) findTwin(card, language!!) else null
+        val languageMissing = wantsOtherLanguage && twin == null
+
+        if (twin == null && binderId == card.binderId) {
             pokemonDao.updateDetails(card.id, category, copies, condition)
-            return
+            return !languageMissing
         }
-        val newId = CardEntryId.of(binderId, CardEntryId.catalogKeyOf(card.id))
+        val base = if (twin == null) card else card.copy(
+            name = twin.name,
+            supertype = twin.cardType,
+            number = twin.number,
+            artist = twin.artist,
+            rarity = twin.rarity,
+            imageUrl = twin.imageUrl,
+            set = twin.setName
+        )
+        val newKey = twin?.catalogKey ?: CardEntryId.catalogKeyOf(card.id)
+        val newId = CardEntryId.of(binderId, newKey)
         val existing = pokemonDao.getById(newId)
         pokemonDao.insertCard(
-            card.copy(
+            base.copy(
                 id = newId,
                 binderId = binderId,
                 category = category,
@@ -191,6 +236,23 @@ class PokemonRepository(
             )
         )
         pokemonDao.deleteById(card.id)
+        return !languageMissing
+    }
+
+    /** Alle carte già salvate senza immagine mette quella che ora il catalogo conosce. */
+    suspend fun repairMissingImages() {
+        val blank = pokemonDao.getAllCards().first().filter { it.imageUrl.isBlank() }
+        if (blank.isEmpty()) return
+        val bySet = blank.groupBy { CardEntryId.catalogKeyOf(it.id).substringBeforeLast(':') }
+        for ((setKey, entries) in bySet) {
+            val lang = setKey.substringBefore(':')
+            val setCode = setKey.substringAfter(':', "")
+            val inCatalog = catalogDao.cardsOfSet(lang, setCode).associateBy { it.catalogKey }
+            for (entry in entries) {
+                val url = inCatalog[CardEntryId.catalogKeyOf(entry.id)]?.imageUrl
+                if (!url.isNullOrBlank()) pokemonDao.updateImage(entry.id, url)
+            }
+        }
     }
 
     /** Toglie una singola carta dal suo binder. */

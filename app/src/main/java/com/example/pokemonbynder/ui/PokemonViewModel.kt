@@ -304,17 +304,18 @@ class PokemonViewModel(
         binderId: Long,
         quantity: Int,
         condition: CardCondition,
-        onResult: (Boolean) -> Unit
+        language: String? = null,
+        onResult: (success: Boolean, languageMissing: Boolean) -> Unit
     ) {
         viewModelScope.launch {
             try {
-                repository.updateCard(card, category, binderId, quantity, condition)
-                onResult(true)
+                val languageApplied = repository.updateCard(card, category, binderId, quantity, condition, language)
+                onResult(true, !languageApplied)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e("PokemonViewModel", "Modifica della carta non riuscita", e)
-                onResult(false)
+                onResult(false, false)
             }
         }
     }

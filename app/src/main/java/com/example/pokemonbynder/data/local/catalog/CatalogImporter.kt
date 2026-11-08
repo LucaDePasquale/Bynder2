@@ -6,31 +6,45 @@ import androidx.room.withTransaction
 import com.example.pokemonbynder.scanner.CardText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.BufferedInputStream
 import java.io.BufferedReader
-import java.io.FileNotFoundException
-import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.zip.GZIPInputStream
 
 /**
- * Importa il catalogo (assets/catalog.bin) nel database Room, una sola volta (la prima apertura
- * dell'app, pochi secondi) e di nuovo solo se [CATALOG_VERSION] aumenta, cioè quando rigeneri il file.
- *
- * Il file si chiama `catalog.bin` perché alcuni strumenti di build trattano in modo speciale
- * i file `.gz` negli assets. Per sicurezza si accettano anche i vecchi nomi, e il contenuto
- * viene decompresso solo se è davvero gzip.
+ * Importa assets/catalog.tsv.gz nel database Room, una sola volta (la prima apertura dell'app,
+ * pochi secondi) e di nuovo solo se [CATALOG_VERSION] aumenta, cioè quando rigeneri il file.
  */
 class CatalogImporter(
     private val context: Context,
     private val database: CatalogDatabase
 ) {
     companion object {
-        const val ASSET_NAME = "catalog.bin"
-        private val ASSET_NAMES = listOf(ASSET_NAME, "catalog.tsv.gz", "catalog.tsv")
+        const val ASSET_NAME = "catalog.tsv.gz"
+        const val SET_PAIRS_ASSET = "set_pairs.tsv"
 
-        /** Incrementa questo numero ogni volta che sostituisci il file del catalogo. */
-        const val CATALOG_VERSION = 1
+        /**
+         * Set "gemelli" tra italiano e inglese (assets/set_pairs.tsv): da "lingua:codice set"
+         * al codice dello stesso set nell'altra lingua. Serve a cambiare la lingua di una carta.
+         */
+        fun readSetPairs(context: Context): Map<String, String> {
+            val pairs = HashMap<String, String>()
+            try {
+                context.assets.open(SET_PAIRS_ASSET).use { raw ->
+                    BufferedReader(InputStreamReader(raw, Charsets.UTF_8)).useLines { lines ->
+                        lines.drop(1).forEach { line ->
+                            val p = line.split('\t')
+                            if (p.size >= 3) pairs["${p[0]}:${p[1]}"] = p[2]
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CatalogImporter", "Impossibile leggere $SET_PAIRS_ASSET", e)
+            }
+            return pairs
+        }
+
+        /** Incrementa questo numero ogni volta che sostituisci il file catalog.tsv.gz. */
+        const val CATALOG_VERSION = 2
 
         private const val PREFS = "catalog_import"
         private const val KEY_VERSION = "version"
@@ -47,12 +61,10 @@ class CatalogImporter(
         try {
             database.withTransaction {
                 dao.clear()
-                openCatalog().use { raw ->
-                    BufferedReader(InputStreamReader(raw, Charsets.UTF_8)).use { reader ->
+                context.assets.open(ASSET_NAME).use { raw ->
+                    BufferedReader(InputStreamReader(GZIPInputStream(raw), Charsets.UTF_8)).use { reader ->
+                        reader.readLine() // intestazione
                         val batch = ArrayList<CatalogCard>(BATCH_SIZE)
-                        // La prima riga è l'intestazione ("lang<TAB>..."); se manca, è già una carta.
-                        val first = reader.readLine()
-                        if (first != null && !first.startsWith("lang\t")) parse(first)?.let { batch.add(it) }
                         while (true) {
                             val line = reader.readLine() ?: break
                             val card = parse(line) ?: continue
@@ -69,7 +81,6 @@ class CatalogImporter(
                         }
                     }
                 }
-                check(imported > 0) { "Il catalogo è vuoto o in un formato non riconosciuto" }
             }
             prefs.edit().putInt(KEY_VERSION, CATALOG_VERSION).apply()
             Log.d("CatalogImporter", "Carte importate: $imported")
@@ -77,29 +88,6 @@ class CatalogImporter(
             Log.e("CatalogImporter", "Errore durante l'importazione del catalogo", e)
             throw e
         }
-    }
-
-    /**
-     * Apre il catalogo con il primo nome disponibile tra [ASSET_NAMES].
-     * Decomprime solo se il contenuto è gzip (primi due byte 1F 8B).
-     */
-    private fun openCatalog(): InputStream {
-        for (name in ASSET_NAMES) {
-            try {
-                val stream = BufferedInputStream(context.assets.open(name))
-                stream.mark(2)
-                val first = stream.read()
-                val second = stream.read()
-                stream.reset()
-                return if (first == 0x1f && second == 0x8b) GZIPInputStream(stream) else stream
-            } catch (e: FileNotFoundException) {
-                // prova il nome successivo
-            }
-        }
-        val found = context.assets.list("")?.joinToString() ?: "nessuno"
-        throw FileNotFoundException(
-            "Nessun catalogo negli assets (cercati: ${ASSET_NAMES.joinToString()}). Presenti: $found"
-        )
     }
 
     // lang, set_code, set_name, number, set_total, name, rarity, artist, card_type, img

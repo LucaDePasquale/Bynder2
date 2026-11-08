@@ -27,6 +27,9 @@ interface PokemonDao {
     @Query("DELETE FROM pokemon_cards WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>)
 
+    @Query("UPDATE pokemon_cards SET imageUrl = :imageUrl WHERE id = :id")
+    suspend fun updateImage(id: String, imageUrl: String)
+
     @Query("UPDATE pokemon_cards SET category = :category WHERE id = :id")
     suspend fun updateCategory(id: String, category: CardCategory)
 

@@ -171,6 +171,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     var cardToDelete by remember { mutableStateOf<PokemonCard?>(null) }
     var showSourceDialog by remember { mutableStateOf(false) }
     var showWishSearch by remember { mutableStateOf(false) }
+    var showCatalogAdd by remember { mutableStateOf(false) }
     var wishToMove by remember { mutableStateOf<WishlistCard?>(null) }
     var importResult by remember { mutableStateOf<ImportResult?>(null) }
     var showNewBinderDialog by remember { mutableStateOf(false) }
@@ -348,11 +349,18 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         text = { Text("Aggiungi alla wishlist") }
                     )
                 } else if (inBinderDetail) {
-                    ExtendedFloatingActionButton(
-                        onClick = { showSourceDialog = true },
-                        icon = { Icon(Icons.Default.Add, null) },
-                        text = { Text("Scansiona carta") }
-                    )
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExtendedFloatingActionButton(
+                            onClick = { showCatalogAdd = true },
+                            icon = { Icon(Icons.Default.Search, null) },
+                            text = { Text("Cerca nel catalogo") }
+                        )
+                        ExtendedFloatingActionButton(
+                            onClick = { showSourceDialog = true },
+                            icon = { Icon(Icons.Default.Add, null) },
+                            text = { Text("Scansiona carta") }
+                        )
+                    }
                 }
             }
         }
@@ -543,10 +551,19 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                 EditCardDialog(
                     card = card,
                     binders = binders,
-                    onConfirm = { category, binderId, quantity, condition ->
-                        viewModel.updateCard(card, category, binderId, quantity, condition) { success ->
-                            if (success) Toast.makeText(context, "Carta aggiornata", Toast.LENGTH_SHORT).show()
-                            else Toast.makeText(context, "Errore nel salvataggio", Toast.LENGTH_LONG).show()
+                    onConfirm = { category, binderId, quantity, condition, language ->
+                        viewModel.updateCard(card, category, binderId, quantity, condition, language) { success, languageMissing ->
+                            if (!success) {
+                                Toast.makeText(context, "Errore nel salvataggio", Toast.LENGTH_LONG).show()
+                            } else if (languageMissing) {
+                                Toast.makeText(
+                                    context,
+                                    "Carta aggiornata, ma la versione in ${CardLanguage.label(language)} non è nel catalogo: lingua non cambiata",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                Toast.makeText(context, "Carta aggiornata", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         cardToEdit = null
                     },
@@ -583,6 +600,19 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                     onSearch = { text, byArtist, onResult -> viewModel.searchCatalog(text, byArtist, onResult) },
                     onPick = { card -> viewModel.addToWishlist(card) { added -> toastWishlist(context, added) } },
                     onDismiss = { showWishSearch = false }
+                )
+            }
+
+            // Aggiunta senza scansione: si cerca nel catalogo e si sceglie tipologia, condizione e binder
+            if (showCatalogAdd) {
+                ManualSearchDialog(
+                    title = "Aggiungi al binder",
+                    onSearch = { text, byArtist, onResult -> viewModel.searchCatalog(text, byArtist, onResult) },
+                    onPick = { card ->
+                        showCatalogAdd = false
+                        viewModel.pickManualCard(card)
+                    },
+                    onDismiss = { showCatalogAdd = false }
                 )
             }
 
@@ -763,12 +793,13 @@ fun CandidateSelectionDialog(
     )
 }
 
-/** Cambia tipologia e/o binder di una carta già salvata. */
+/** Cambia tipologia, copie, condizione, binder e/o lingua di una carta già salvata. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditCardDialog(
     card: PokemonCard,
     binders: List<Binder>,
-    onConfirm: (CardCategory, Long, Int, CardCondition) -> Unit,
+    onConfirm: (CardCategory, Long, Int, CardCondition, String) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -776,6 +807,7 @@ fun EditCardDialog(
     var selectedBinderId by remember(card.id) { mutableStateOf(card.binderId) }
     var quantity by remember(card.id) { mutableStateOf(card.quantity) }
     var condition by remember(card.id) { mutableStateOf(card.condition) }
+    var language by remember(card.id) { mutableStateOf(CardLanguage.of(card.id)) }
     var confirmDelete by remember(card.id) { mutableStateOf(false) }
 
     if (confirmDelete) {
@@ -808,6 +840,24 @@ fun EditCardDialog(
                 Spacer(modifier = Modifier.height(4.dp))
                 ConditionPicker(selected = condition, onSelect = { condition = it })
 
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Lingua della carta:")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("it", "en").forEach { code ->
+                        FilterChip(
+                            selected = language == code,
+                            onClick = { language = code },
+                            label = { Text(CardLanguage.label(code)) }
+                        )
+                    }
+                }
+                if (language != CardLanguage.of(card.id)) {
+                    Text(
+                        "La carta diventa la versione ${CardLanguage.label(language)}, con la sua immagine e il suo nome.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
                 if (binders.size > 1) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Binder:")
@@ -822,7 +872,7 @@ fun EditCardDialog(
                 ) { Text("Elimina carta") }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selectedCategory, selectedBinderId, quantity, condition) }) { Text("Salva") } },
+        confirmButton = { Button(onClick = { onConfirm(selectedCategory, selectedBinderId, quantity, condition, language) }) { Text("Salva") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
