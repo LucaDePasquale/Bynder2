@@ -15,7 +15,8 @@ class ShareTextTest {
     private fun card(id: String, name: String, quantity: Int, binderId: Long = 1, set: String = "Base Set") = PokemonCard(
         id = id, name = name, supertype = "Pokémon", subtypes = emptyList(), number = "58", artist = null,
         rarity = null, imageUrl = "", set = set, binderId = binderId, quantity = quantity,
-        condition = CardCondition.NEAR_MINT
+        condition = CardCondition.NEAR_MINT,
+        category = "Pokémon"
     )
 
     @Test

@@ -15,7 +15,7 @@ data class PokemonCard(
     val rarity: String?,
     val imageUrl: String,
     val set: String,
-    val category: CardCategory, // Tipologia della carta fisica, modificabile dopo l'aggiunta
+    val category: String, // Tipologia della carta fisica, modificabile dopo l'aggiunta
     @ColumnInfo(defaultValue = "1") val binderId: Long = DEFAULT_BINDER_ID, // Binder che contiene la carta
     @ColumnInfo(defaultValue = "1") val quantity: Int = 1, // Quante copie si hanno
     val condition: CardCondition = CardCondition.NEAR_MINT // Stato di conservazione
