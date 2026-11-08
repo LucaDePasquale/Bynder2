@@ -183,11 +183,12 @@ fun WishlistFoundDialog(
     wish: WishlistCard,
     binders: List<Binder>,
     defaultBinderId: Long,
+    defaultCondition: CardCondition = CardCondition.NEAR_MINT,
     onConfirm: (CardCategory, Long, CardCondition) -> Unit,
     onDismiss: () -> Unit
 ) {
     var category by remember(wish.id) { mutableStateOf(CardCategory.NORMAL) }
-    var condition by remember(wish.id) { mutableStateOf(CardCondition.NEAR_MINT) }
+    var condition by remember(wish.id) { mutableStateOf(defaultCondition) }
     var binderId by remember(wish.id) { mutableStateOf(defaultBinderId) }
 
     AlertDialog(

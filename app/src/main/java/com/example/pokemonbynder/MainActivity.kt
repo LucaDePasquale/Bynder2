@@ -8,6 +8,7 @@ import android.util.Log
 import android.util.Size
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -20,21 +21,22 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,15 +50,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.example.pokemonbynder.data.backup.ImportResult
-import com.example.pokemonbynder.data.backup.ShareText
-import com.example.pokemonbynder.data.stats.CardLanguage
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.pokemonbynder.data.backup.ImportResult
+import com.example.pokemonbynder.data.backup.ShareText
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.model.Binder
 import com.example.pokemonbynder.data.model.CardCategory
@@ -65,6 +66,7 @@ import com.example.pokemonbynder.data.model.CardEntryId
 import com.example.pokemonbynder.data.model.DEFAULT_BINDER_ID
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.model.WishlistCard
+import com.example.pokemonbynder.data.stats.CardLanguage
 import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
@@ -73,14 +75,13 @@ import com.example.pokemonbynder.ui.SortOrder
 import com.example.pokemonbynder.ui.scanner.CardScannerAnalyzer
 import com.example.pokemonbynder.ui.scanner.ScannerGuide
 import com.example.pokemonbynder.ui.theme.PokemonBynderTheme
-import kotlinx.coroutines.Dispatchers
+import com.example.pokemonbynder.ui.theme.appBarColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -90,9 +91,16 @@ class MainActivity : ComponentActivity() {
         val repository = app.repository
         val catalogReady = app.catalogReady
 
-        enableEdgeToEdge()
+        // La barra in alto è blu scuro in entrambi i temi: le icone di stato restano chiare.
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent {
-            PokemonBynderTheme {
+            val settings by app.settings.state.collectAsState()
+            val dark = when (settings.themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            PokemonBynderTheme(darkTheme = dark) {
                 val viewModel: PokemonViewModel = viewModel(
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
@@ -101,56 +109,91 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
-                MainScreen(viewModel, app.catalogError)
+                MainScreen(viewModel, app.catalogError, app.settings)
             }
         }
     }
 }
 
+/** Le pagine dell'app. Le prime cinque stanno nella barra in basso; "Statistiche" si apre dalla Home. */
+enum class AppScreen(val label: String) {
+    HOME("Home"),
+    BINDERS("Binder"),
+    CATALOG("Catalogo"),
+    WISHLIST("Wishlist"),
+    SETTINGS("Impostazioni"),
+    STATS("Statistiche")
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
+fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, settingsStore: SettingsStore) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val settings by settingsStore.state.collectAsState()
+
     val importError by catalogError.collectAsState()
     val cards by viewModel.cards.collectAsState()
-    val isScanning by viewModel.isScanning.collectAsState()
-    val candidates by viewModel.candidates.collectAsState()
-    val catalogReady by viewModel.isCatalogReady.collectAsState()
-    val context = LocalContext.current
-    var cardToEdit by remember { mutableStateOf<PokemonCard?>(null) }
-    var showSourceDialog by remember { mutableStateOf(false) }
-    val scanSource by viewModel.scanSource.collectAsState()
-    val scanError by viewModel.scanError.collectAsState()
-    val prefs = remember { context.getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE) }
-    var lastSource by remember { mutableStateOf(ScanSource.fromName(prefs.getString("scan_source", null))) }
-
+    val allCards by viewModel.allCards.collectAsState()
     val binders by viewModel.binders.collectAsState()
     val selectedBinderId by viewModel.selectedBinderId.collectAsState()
-    val filterCategory by viewModel.filterCategory.collectAsState()
     val cardCounts by viewModel.cardCounts.collectAsState()
-    var showNewBinderDialog by remember { mutableStateOf(false) }
-    var binderToRename by remember { mutableStateOf<Binder?>(null) }
-    var binderToDelete by remember { mutableStateOf<Binder?>(null) }
-    val selectedBinder = binders.firstOrNull { it.id == selectedBinderId }
-
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val sortOrder by viewModel.sortOrder.collectAsState()
-    var showManualSearch by remember { mutableStateOf(false) }
-    var lastContinuous by remember { mutableStateOf(prefs.getBoolean("continuous_scan", false)) }
-    var listView by remember { mutableStateOf(prefs.getBoolean("list_view", false)) }
-
     val wishlist by viewModel.wishlist.collectAsState()
     val prices by viewModel.prices.collectAsState()
     val priceProgress by viewModel.priceProgress.collectAsState()
-    var tab by rememberSaveable { mutableStateOf(0) } // 0 = binder, 1 = wishlist
+    val isScanning by viewModel.isScanning.collectAsState()
+    val candidates by viewModel.candidates.collectAsState()
+    val catalogReady by viewModel.isCatalogReady.collectAsState()
+    val scanSource by viewModel.scanSource.collectAsState()
+    val scanError by viewModel.scanError.collectAsState()
+
+    // Le impostazioni valgono subito e anche alla prossima apertura dell'app
+    LaunchedEffect(settings.scanSource) { viewModel.setScanSource(settings.scanSource) }
+    LaunchedEffect(settings.continuousScan) { viewModel.setContinuousScan(settings.continuousScan) }
+    LaunchedEffect(settings.sortOrder) { viewModel.setSortOrder(settings.sortOrder) }
+
+    // Navigazione
+    var screenIndex by rememberSaveable { mutableStateOf(0) }
+    var binderOpen by rememberSaveable { mutableStateOf(false) }
+    var catalogSection by rememberSaveable { mutableStateOf(0) }
+    val screen = AppScreen.entries[screenIndex.coerceIn(0, AppScreen.entries.size - 1)]
+    val inBinderDetail = screen == AppScreen.BINDERS && binderOpen
+    val selectedBinder = binders.firstOrNull { it.id == selectedBinderId }
+
+    fun goTo(target: AppScreen) {
+        screenIndex = target.ordinal
+        binderOpen = false
+    }
+
+    // Finestre e dialoghi
+    var cardToEdit by remember { mutableStateOf<PokemonCard?>(null) }
+    var previewId by remember { mutableStateOf<String?>(null) }
+    var cardToDelete by remember { mutableStateOf<PokemonCard?>(null) }
+    var showSourceDialog by remember { mutableStateOf(false) }
+    var showWishSearch by remember { mutableStateOf(false) }
+    var wishToMove by remember { mutableStateOf<WishlistCard?>(null) }
+    var importResult by remember { mutableStateOf<ImportResult?>(null) }
+    var showNewBinderDialog by remember { mutableStateOf(false) }
+    var binderToRename by remember { mutableStateOf<Binder?>(null) }
+    var binderToDelete by remember { mutableStateOf<Binder?>(null) }
+    var binderMenuOpen by remember { mutableStateOf(false) }
+
+    // Selezione multipla: si entra con un tocco lungo su una carta del binder
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var showDeleteSelected by remember { mutableStateOf(false) }
+    val selection = cards.filter { it.id in selectedIds }
+    val selecting = selection.isNotEmpty() && inBinderDetail
+    LaunchedEffect(selectedBinderId, screenIndex, binderOpen) { selectedIds = emptySet() }
+
+    fun toggleSelected(card: PokemonCard) {
+        selectedIds = if (card.id in selectedIds) selectedIds - card.id else selectedIds + card.id
+    }
+
+    val binderNames = binders.associate { it.id to it.name }
+    fun priceOf(card: PokemonCard): Double? = prices[CardEntryId.catalogKeyOf(card.id)]
+    val defaultBinderId = selectedBinderId ?: binders.firstOrNull()?.id ?: DEFAULT_BINDER_ID
 
     // Backup su file e condivisione di liste
-    val allCards by viewModel.allCards.collectAsState()
-    val filterLanguage by viewModel.filterLanguage.collectAsState()
-    val onlyDuplicates by viewModel.onlyDuplicates.collectAsState()
-    val languages = remember(allCards) { allCards.map { CardLanguage.of(it.id) }.distinct().sorted() }
-    val scope = rememberCoroutineScope()
-    var importResult by remember { mutableStateOf<ImportResult?>(null) }
-
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
             viewModel.exportBackup { json ->
@@ -188,23 +231,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
         if (text == null) Toast.makeText(context, emptyMessage, Toast.LENGTH_SHORT).show()
         else shareText(context, title, text)
     }
-    var showWishSearch by remember { mutableStateOf(false) }
-    var wishToMove by remember { mutableStateOf<WishlistCard?>(null) }
-
-    // Selezione multipla: si entra con un tocco lungo su una carta
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
-    var showDeleteSelected by remember { mutableStateOf(false) }
-    val selection = cards.filter { it.id in selectedIds }
-    val selecting = selection.isNotEmpty()
-    LaunchedEffect(selectedBinderId, tab) { selectedIds = emptySet() }
-    BackHandler(enabled = selecting) { selectedIds = emptySet() }
-
-    fun toggleSelected(card: PokemonCard) {
-        selectedIds = if (card.id in selectedIds) selectedIds - card.id else selectedIds + card.id
+    fun refreshAllPrices() {
+        viewModel.refreshBinderPrices(allCards) { found, checked ->
+            Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
+        }
     }
-
-    fun priceOf(card: PokemonCard): Double? = prices[CardEntryId.catalogKeyOf(card.id)]
-    val binderNames = binders.associate { it.id to it.name }
 
     // Errori della ricerca (es. rete assente): si mostrano una volta sola.
     LaunchedEffect(scanError) {
@@ -222,6 +253,19 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
         if (granted) viewModel.setScanning(true)
     }
 
+    // Tasto indietro: l'ultimo registrato ha la precedenza
+    BackHandler(enabled = screen != AppScreen.HOME && !inBinderDetail) { goTo(AppScreen.HOME) }
+    BackHandler(enabled = inBinderDetail) { binderOpen = false }
+    BackHandler(enabled = selecting) { selectedIds = emptySet() }
+    BackHandler(enabled = isScanning) { viewModel.setScanning(false) }
+
+    val barTextColors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+        containerColor = appBarColor(),
+        titleContentColor = Color.White,
+        navigationIconContentColor = Color.White,
+        actionIconContentColor = Color.White
+    )
+
     Scaffold(
         topBar = {
             if (selecting) {
@@ -236,238 +280,184 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 )
             } else {
+                val title = when {
+                    inBinderDetail -> selectedBinder?.name ?: "Tutte le carte"
+                    screen == AppScreen.HOME -> "Pokémon Virtual Binder"
+                    screen == AppScreen.BINDERS -> "I miei binder"
+                    else -> screen.label
+                }
                 CenterAlignedTopAppBar(
-                    title = { Text("POKÉMON VIRTUAL BINDER", fontWeight = FontWeight.Bold) },
-                    actions = {
-                        BackupMenu(
-                            onExport = {
-                                val day = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
-                                exportLauncher.launch("pokemon-binder-$day.json")
-                            },
-                            onImport = { importLauncher.launch(arrayOf("*/*")) },
-                            onShareDuplicates = {
-                                shareOrExplain("Carte doppie", ShareText.duplicates(allCards), "Non hai carte doppie")
-                            },
-                            onShareWishlist = {
-                                shareOrExplain("Wishlist", ShareText.wishlist(wishlist), "La wishlist è vuota")
-                            },
-                            onShareCollection = {
-                                shareOrExplain("La mia collezione", ShareText.collection(allCards, binders), "La collezione è vuota")
-                            }
-                        )
+                    title = { Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = {
+                        if (inBinderDetail) {
+                            TextButton(onClick = { binderOpen = false }) { Text("←", color = Color.White, style = MaterialTheme.typography.titleLarge) }
+                        } else if (screen == AppScreen.STATS) {
+                            TextButton(onClick = { goTo(AppScreen.HOME) }) { Text("←", color = Color.White, style = MaterialTheme.typography.titleLarge) }
+                        }
                     },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                    actions = {
+                        // Rinomina ed elimina riguardano il binder aperto (non "Tutte le carte")
+                        if (inBinderDetail && selectedBinder != null) {
+                            IconButton(onClick = { binderMenuOpen = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Azioni sul binder")
+                            }
+                            DropdownMenu(expanded = binderMenuOpen, onDismissRequest = { binderMenuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Rinomina") },
+                                    onClick = { binderMenuOpen = false; binderToRename = selectedBinder }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Elimina binder") },
+                                    enabled = binders.size > 1,
+                                    onClick = { binderMenuOpen = false; binderToDelete = selectedBinder }
+                                )
+                            }
+                        }
+                    },
+                    colors = barTextColors
                 )
             }
         },
-        floatingActionButton = {
-            if (catalogReady && !isScanning && candidates == null && !selecting && tab == 1) {
-                ExtendedFloatingActionButton(
-                    onClick = { showWishSearch = true },
-                    icon = { Icon(Icons.Default.Add, null) },
-                    text = { Text("Aggiungi alla wishlist") }
-                )
-            } else if (catalogReady && !isScanning && candidates == null && !selecting && tab == 0) {
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ExtendedFloatingActionButton(
-                        onClick = { showManualSearch = true },
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        icon = { Icon(Icons.Default.Search, null) },
-                        text = { Text("Cerca a mano") }
+        bottomBar = {
+            if (!isScanning) {
+                NavigationBar {
+                    val items = listOf(
+                        AppScreen.HOME to Icons.Default.Home,
+                        AppScreen.BINDERS to Icons.Default.List,
+                        AppScreen.CATALOG to Icons.Default.Search,
+                        AppScreen.WISHLIST to Icons.Default.Favorite,
+                        AppScreen.SETTINGS to Icons.Default.Settings
                     )
+                    items.forEach { (item, icon) ->
+                        NavigationBarItem(
+                            selected = screen == item || (item == AppScreen.HOME && screen == AppScreen.STATS),
+                            onClick = { goTo(item) },
+                            icon = { Icon(icon, contentDescription = item.label) },
+                            label = { Text(item.label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+            }
+        },
+        floatingActionButton = {
+            if (catalogReady && !isScanning && candidates == null && !selecting) {
+                if (screen == AppScreen.WISHLIST) {
+                    ExtendedFloatingActionButton(
+                        onClick = { showWishSearch = true },
+                        icon = { Icon(Icons.Default.Add, null) },
+                        text = { Text("Aggiungi alla wishlist") }
+                    )
+                } else if (inBinderDetail) {
                     ExtendedFloatingActionButton(
                         onClick = { showSourceDialog = true },
                         icon = { Icon(Icons.Default.Add, null) },
-                        text = { Text("Scansiona Carta") }
+                        text = { Text("Scansiona carta") }
                     )
                 }
             }
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Binder") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Wishlist (${wishlist.size})") })
-                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Set") })
-                    Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Statistiche") })
-                }
+            when (screen) {
+                AppScreen.HOME -> HomePage(
+                    allCards = allCards,
+                    bindersCount = binders.size,
+                    wishlistCount = wishlist.size,
+                    prices = prices,
+                    onScan = { showSourceDialog = true },
+                    onSearch = { catalogSection = 0; goTo(AppScreen.CATALOG) },
+                    onOpenBinders = { goTo(AppScreen.BINDERS) },
+                    onOpenWishlist = { goTo(AppScreen.WISHLIST) },
+                    onOpenSets = { catalogSection = 1; goTo(AppScreen.CATALOG) },
+                    onOpenStats = { goTo(AppScreen.STATS) },
+                    onOpenCard = { previewId = it.id }
+                )
 
-                if (tab == 1) {
-                    WishlistTab(
-                        wishlist = wishlist,
-                        prices = prices,
-                        progress = priceProgress,
-                        onFound = { wishToMove = it },
-                        onRemove = { wish ->
-                            viewModel.removeFromWishlist(wish) { success ->
-                                if (!success) Toast.makeText(context, "Impossibile rimuovere la carta", Toast.LENGTH_LONG).show()
-                            }
-                        },
-                        onRefresh = {
-                            viewModel.refreshWishlistPrices(wishlist) { found, checked ->
-                                Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    )
-                } else if (tab == 2) {
-                    SetsTab(
-                        catalogReady = catalogReady,
-                        ownedCards = allCards,
-                        loadSets = { viewModel.loadCatalogSets() },
-                        loadSetCards = { lang, code -> viewModel.loadSetCards(lang, code) },
-                        onAddToWishlist = { list ->
-                            viewModel.addToWishlistAll(list) { added ->
-                                val message = when {
-                                    added == null -> "Impossibile aggiungere alla wishlist"
-                                    added == 0 -> "Già nella wishlist"
-                                    added == 1 -> "1 carta aggiunta alla wishlist"
-                                    else -> "$added carte aggiunte alla wishlist"
-                                }
-                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    )
-                } else if (tab == 3) {
-                    StatsTab(
-                        cards = allCards,
-                        prices = prices,
-                        progress = priceProgress,
-                        onRefreshPrices = {
-                            viewModel.refreshBinderPrices(allCards) { found, checked ->
-                                Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
-                            }
-                        }
+                AppScreen.BINDERS -> if (binderOpen) {
+                    BinderDetail(
+                        viewModel = viewModel,
+                        listView = settings.listView,
+                        onToggleView = { settingsStore.update { it.copy(listView = !it.listView) } },
+                        selectedIds = selectedIds,
+                        selecting = selecting,
+                        binderNames = binderNames,
+                        onToggleSelected = { toggleSelected(it) },
+                        onOpenCard = { previewId = it.id },
+                        onEditCard = { cardToEdit = it },
+                        onDeleteCard = { cardToDelete = it }
                     )
                 } else {
-                BinderBar(
-                    binders = binders,
-                    counts = cardCounts,
-                    selectedId = selectedBinderId,
-                    onSelect = { viewModel.selectBinder(it) },
-                    onAdd = { showNewBinderDialog = true }
-                )
-
-                // Con un binder scelto si può rinominare o eliminare (l'ultimo binder non si elimina)
-                if (selectedBinder != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            selectedBinder.name,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { binderToRename = selectedBinder }) { Text("Rinomina") }
-                        TextButton(
-                            onClick = { binderToDelete = selectedBinder },
-                            enabled = binders.size > 1
-                        ) { Text("Elimina") }
-                    }
+                    BindersOverview(
+                        binders = binders,
+                        allCards = allCards,
+                        prices = prices,
+                        onOpen = { id ->
+                            viewModel.selectBinder(id)
+                            binderOpen = true
+                        },
+                        onNew = { showNewBinderDialog = true }
+                    )
                 }
 
-                CategoryFilterBar(selected = filterCategory, onSelect = { viewModel.setFilterCategory(it) })
-
-                ExtraFilterBar(
-                    languages = languages,
-                    selectedLanguage = filterLanguage,
-                    onLanguage = { viewModel.setFilterLanguage(it) },
-                    onlyDuplicates = onlyDuplicates,
-                    onOnlyDuplicates = { viewModel.setOnlyDuplicates(it) }
-                )
-
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.setSearchQuery(it) },
-                    placeholder = { Text("Cerca per nome, set o numero") },
-                    singleLine = true,
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                Icon(Icons.Default.Close, contentDescription = "Cancella ricerca")
+                AppScreen.CATALOG -> CatalogPage(
+                    viewModel = viewModel,
+                    catalogReady = catalogReady,
+                    ownedCards = allCards,
+                    onAddToBinder = { viewModel.pickManualCard(it) },
+                    onWishlist = { card -> viewModel.addToWishlist(card) { added -> toastWishlist(context, added) } },
+                    onAddToWishlist = { list ->
+                        viewModel.addToWishlistAll(list) { added ->
+                            val message = when {
+                                added == null -> "Impossibile aggiungere alla wishlist"
+                                added == 0 -> "Già nella wishlist"
+                                added == 1 -> "1 carta aggiunta alla wishlist"
+                                else -> "$added carte aggiunte alla wishlist"
                             }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                    section = catalogSection,
+                    onSectionChange = { catalogSection = it }
                 )
 
-                SortAndViewBar(
-                    count = cards.size,
-                    copies = cards.sumOf { it.quantity },
-                    sortOrder = sortOrder,
-                    onSortChange = { viewModel.setSortOrder(it) },
-                    listView = listView,
-                    onToggleView = {
-                        listView = !listView
-                        prefs.edit().putBoolean("list_view", listView).apply()
-                    }
-                )
-
-                ValueBar(
-                    text = valueText(
-                        label = "Valore",
-                        total = cards.sumOf { (priceOf(it) ?: 0.0) * it.quantity },
-                        withoutPrice = cards.count { priceOf(it) == null },
-                        cardCount = cards.size
-                    ),
+                AppScreen.WISHLIST -> WishlistTab(
+                    wishlist = wishlist,
+                    prices = prices,
                     progress = priceProgress,
-                    enabled = cards.isNotEmpty(),
+                    onFound = { wishToMove = it },
+                    onRemove = { wish ->
+                        viewModel.removeFromWishlist(wish) { success ->
+                            if (!success) Toast.makeText(context, "Impossibile rimuovere la carta", Toast.LENGTH_LONG).show()
+                        }
+                    },
                     onRefresh = {
-                        viewModel.refreshBinderPrices(cards) { found, checked ->
+                        viewModel.refreshWishlistPrices(wishlist) { found, checked ->
                             Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
                         }
                     }
                 )
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    if (cards.isEmpty()) {
-                        val inScope = selectedBinderId?.let { cardCounts[it] ?: 0 } ?: cardCounts.values.sum()
-                        Text(
-                            if (inScope == 0) "Binder vuoto. Scansiona una carta!" else "Nessuna carta corrisponde a ricerca e filtri.",
-                            modifier = Modifier.align(Alignment.Center).padding(24.dp)
-                        )
-                    } else if (listView) {
-                        LazyColumn(
-                            // Spazio in fondo: i pulsanti non devono coprire l'ultima carta
-                            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 160.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(cards, key = { it.id }) { card ->
-                                CardRow(
-                                    card = card,
-                                    binderName = if (selectedBinderId == null) binderNames[card.binderId] else null,
-                                    price = priceOf(card),
-                                    selected = card.id in selectedIds,
-                                    onClick = { if (selecting) toggleSelected(card) else cardToEdit = card },
-                                    onLongClick = { toggleSelected(card) }
-                                )
-                            }
-                        }
-                    } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 160.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(cards, key = { it.id }) { card ->
-                                CardItem(
-                                    card = card,
-                                    // Guardando tutti i binder insieme si vede in quale sta ogni carta
-                                    binderName = if (selectedBinderId == null) binderNames[card.binderId] else null,
-                                    price = priceOf(card),
-                                    selected = card.id in selectedIds,
-                                    onClick = { if (selecting) toggleSelected(card) else cardToEdit = card },
-                                    onLongClick = { toggleSelected(card) }
-                                )
-                            }
-                        }
-                    }
-                }
-                } // fine della scheda Binder
+                AppScreen.SETTINGS -> SettingsPage(
+                    settings = settings,
+                    onChange = { change -> settingsStore.update(change) },
+                    priceProgress = priceProgress,
+                    onRefreshPrices = { refreshAllPrices() },
+                    onExport = {
+                        val day = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
+                        exportLauncher.launch("pokemon-binder-$day.json")
+                    },
+                    onImport = { importLauncher.launch(arrayOf("*/*")) },
+                    onShareDuplicates = { shareOrExplain("Carte doppie", ShareText.duplicates(allCards), "Non hai carte doppie") },
+                    onShareWishlist = { shareOrExplain("Wishlist", ShareText.wishlist(wishlist), "La wishlist è vuota") },
+                    onShareCollection = { shareOrExplain("La mia collezione", ShareText.collection(allCards, binders), "La collezione è vuota") }
+                )
+
+                AppScreen.STATS -> StatsTab(
+                    cards = allCards,
+                    prices = prices,
+                    progress = priceProgress,
+                    onRefreshPrices = { refreshAllPrices() }
+                )
             }
 
             if (isScanning) {
@@ -507,12 +497,27 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 }
             }
 
+            // Carta ingrandita (un tocco su una carta del binder o della Home)
+            allCards.firstOrNull { it.id == previewId }?.let { card ->
+                CardPreviewDialog(
+                    card = card,
+                    binderName = binderNames[card.binderId],
+                    price = priceOf(card),
+                    onEdit = {
+                        previewId = null
+                        cardToEdit = card
+                    },
+                    onDismiss = { previewId = null }
+                )
+            }
+
             // Dialog per scegliere la carta giusta, la tipologia e il binder
             candidates?.let { list ->
                 CandidateSelectionDialog(
                     candidates = list,
                     binders = binders,
-                    defaultBinderId = selectedBinderId ?: binders.firstOrNull()?.id ?: DEFAULT_BINDER_ID,
+                    defaultBinderId = defaultBinderId,
+                    defaultCondition = settings.defaultCondition,
                     onConfirm = { card, category, binderId, condition ->
                         viewModel.confirmAndAddCard(card, category, binderId, condition) { success, quantity ->
                             if (success) {
@@ -528,7 +533,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 )
             }
 
-            // Dialog per cambiare tipologia e/o binder di una carta già salvata
+            // Dialog per cambiare tipologia, copie, condizione e/o binder di una carta già salvata
             cardToEdit?.let { card ->
                 EditCardDialog(
                     card = card,
@@ -551,18 +556,18 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 )
             }
 
-            // Ricerca a mano nel catalogo, per le carte che la fotocamera non riconosce
-            if (showManualSearch) {
-                ManualSearchDialog(
-                    onSearch = { text, onResult -> viewModel.searchCatalog(text, onResult) },
-                    onPick = { card ->
-                        showManualSearch = false
-                        viewModel.pickManualCard(card)
+            // Eliminazione di una carta dal menu dei tre puntini
+            cardToDelete?.let { card ->
+                DeleteCardsDialog(
+                    count = 1,
+                    onConfirm = {
+                        cardToDelete = null
+                        viewModel.deleteCard(card) { success ->
+                            if (success) Toast.makeText(context, "Carta eliminata", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Impossibile eliminare la carta", Toast.LENGTH_LONG).show()
+                        }
                     },
-                    onWish = { card ->
-                        viewModel.addToWishlist(card) { added -> toastWishlist(context, added) }
-                    },
-                    onDismiss = { showManualSearch = false }
+                    onDismiss = { cardToDelete = null }
                 )
             }
 
@@ -581,7 +586,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                 WishlistFoundDialog(
                     wish = wish,
                     binders = binders,
-                    defaultBinderId = selectedBinderId ?: binders.firstOrNull()?.id ?: DEFAULT_BINDER_ID,
+                    defaultBinderId = defaultBinderId,
+                    defaultCondition = settings.defaultCondition,
                     onConfirm = { category, binderId, condition ->
                         wishToMove = null
                         viewModel.moveWishlistToBinder(wish, category, binderId, condition) { success ->
@@ -624,7 +630,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     onConfirm = { name ->
                         showNewBinderDialog = false
                         viewModel.addBinder(name) { success ->
-                            if (!success) Toast.makeText(context, "Impossibile creare il binder", Toast.LENGTH_LONG).show()
+                            if (success) binderOpen = true
+                            else Toast.makeText(context, "Impossibile creare il binder", Toast.LENGTH_LONG).show()
                         }
                     },
                     onDismiss = { showNewBinderDialog = false }
@@ -654,8 +661,12 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
                     onConfirm = {
                         binderToDelete = null
                         viewModel.deleteBinder(binder.id) { success ->
-                            if (success) Toast.makeText(context, "Binder eliminato", Toast.LENGTH_SHORT).show()
-                            else Toast.makeText(context, "Impossibile eliminare il binder", Toast.LENGTH_LONG).show()
+                            if (success) {
+                                binderOpen = false
+                                Toast.makeText(context, "Binder eliminato", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Impossibile eliminare il binder", Toast.LENGTH_LONG).show()
+                            }
                         }
                     },
                     onDismiss = { binderToDelete = null }
@@ -665,16 +676,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>) {
             // Scelta della fonte (catalogo offline o TCGdex) prima di aprire la fotocamera
             if (showSourceDialog) {
                 ScanSourceDialog(
-                    initial = lastSource,
-                    initialContinuous = lastContinuous,
+                    initial = settings.scanSource,
+                    initialContinuous = settings.continuousScan,
                     onConfirm = { source, continuous ->
                         showSourceDialog = false
-                        lastSource = source
-                        lastContinuous = continuous
-                        prefs.edit()
-                            .putString("scan_source", source.name)
-                            .putBoolean("continuous_scan", continuous)
-                            .apply()
+                        settingsStore.update { it.copy(scanSource = source, continuousScan = continuous) }
                         viewModel.setScanSource(source)
                         viewModel.setContinuousScan(continuous)
                         if (hasCameraPermission) viewModel.setScanning(true)
@@ -692,12 +698,13 @@ fun CandidateSelectionDialog(
     candidates: List<Candidate>,
     binders: List<Binder>,
     defaultBinderId: Long,
+    defaultCondition: CardCondition = CardCondition.NEAR_MINT,
     onConfirm: (CatalogCard, CardCategory, Long, CardCondition) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selected by remember(candidates) { mutableStateOf(candidates.first().card) }
     var selectedCategory by remember { mutableStateOf(CardCategory.NORMAL) }
-    var selectedCondition by remember { mutableStateOf(CardCondition.NEAR_MINT) }
+    var selectedCondition by remember { mutableStateOf(defaultCondition) }
     var selectedBinderId by remember(candidates) { mutableStateOf(defaultBinderId) }
 
     AlertDialog(
@@ -853,90 +860,6 @@ fun SortAndViewBar(
     }
 }
 
-/** Ricerca per nome nel catalogo offline; il risultato scelto passa al dialog di tipologia e binder. */
-@Composable
-fun ManualSearchDialog(
-    title: String = "Cerca una carta",
-    onSearch: (String, (List<CatalogCard>?) -> Unit) -> Unit,
-    onPick: (CatalogCard) -> Unit,
-    onWish: ((CatalogCard) -> Unit)? = null,
-    onDismiss: () -> Unit
-) {
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<CatalogCard>>(emptyList()) }
-    var failed by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf(false) }
-
-    // Si cerca dopo una breve pausa nella digitazione; le risposte vecchie vengono ignorate.
-    LaunchedEffect(query) {
-        val text = query.trim()
-        if (text.length < 2) {
-            results = emptyList()
-            failed = false
-            searched = false
-            return@LaunchedEffect
-        }
-        delay(300)
-        onSearch(text) { found ->
-            if (text == query.trim()) {
-                failed = found == null
-                results = found.orEmpty()
-                searched = true
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Nome della carta") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Column(modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
-                    when {
-                        query.trim().length < 2 -> Text("Scrivi almeno 2 lettere.", style = MaterialTheme.typography.bodySmall)
-                        failed -> Text("Errore nella ricerca nel catalogo.", style = MaterialTheme.typography.bodySmall)
-                        searched && results.isEmpty() -> Text("Nessuna carta trovata.", style = MaterialTheme.typography.bodySmall)
-                        else -> results.forEach { card ->
-                            val total = if (card.setTotal > 0) "/${card.setTotal}" else ""
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().clickable { onPick(card) }.padding(vertical = 4.dp)
-                            ) {
-                                AsyncImage(
-                                    model = card.imageUrl.ifBlank { null },
-                                    contentDescription = card.name,
-                                    modifier = Modifier.width(40.dp).height(56.dp),
-                                    contentScale = ContentScale.Fit
-                                )
-                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                                    Text(card.name, fontWeight = FontWeight.Bold)
-                                    Text(
-                                        "${card.setName} · ${card.number}$total · ${card.lang.uppercase()}",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
-                                if (onWish != null) {
-                                    TextButton(onClick = { onWish(card) }) { Text("Wishlist") }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Chiudi") } }
-    )
-}
-
 /** Elenco dei binder tra cui scegliere (in aggiunta e in modifica di una carta). */
 @Composable
 fun BinderPicker(binders: List<Binder>, selectedId: Long, onSelect: (Long) -> Unit) {
@@ -951,41 +874,6 @@ fun BinderPicker(binders: List<Binder>, selectedId: Long, onSelect: (Long) -> Un
             RadioButton(selected = selectedId == binder.id, onClick = { onSelect(binder.id) })
             Text(binder.name, modifier = Modifier.padding(start = 8.dp))
         }
-    }
-}
-
-/** Barra scorrevole con "Tutti" e un chip per ogni binder (con il numero di carte), più "Nuovo binder". */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BinderBar(
-    binders: List<Binder>,
-    counts: Map<Long, Int>,
-    selectedId: Long?,
-    onSelect: (Long?) -> Unit,
-    onAdd: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("Binder:", style = MaterialTheme.typography.labelMedium)
-        FilterChip(
-            selected = selectedId == null,
-            onClick = { onSelect(null) },
-            label = { Text("Tutti (${counts.values.sum()})") }
-        )
-        binders.forEach { binder ->
-            FilterChip(
-                selected = selectedId == binder.id,
-                onClick = { onSelect(binder.id) },
-                label = { Text("${binder.name} (${counts[binder.id] ?: 0})") }
-            )
-        }
-        AssistChip(onClick = onAdd, label = { Text("+ Nuovo binder") })
     }
 }
 
@@ -1277,100 +1165,6 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onClos
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun CardItem(
-    card: PokemonCard,
-    binderName: String?,
-    price: Double?,
-    selected: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        elevation = CardDefaults.cardElevation(4.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column {
-            AsyncImage(
-                model = card.imageUrl.ifBlank { null },
-                contentDescription = card.name,
-                modifier = Modifier.fillMaxWidth().height(220.dp),
-                contentScale = ContentScale.Fit
-            )
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text((if (selected) "✓ " else "") + card.name, fontWeight = FontWeight.Bold)
-                Text("Art: ${card.artist ?: "N/D"}", style = MaterialTheme.typography.bodySmall)
-                Text(cardDetailsLine(card, price), style = MaterialTheme.typography.bodySmall)
-                if (binderName != null) {
-                    Text(
-                        "Binder: $binderName",
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                SuggestionChip(onClick = onClick, label = { Text(card.category.label) })
-            }
-        }
-    }
-}
-
-/** Versione compatta di [CardItem] per la vista a lista. */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun CardRow(
-    card: PokemonCard,
-    binderName: String?,
-    price: Double?,
-    selected: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        elevation = CardDefaults.cardElevation(2.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = card.imageUrl.ifBlank { null },
-                contentDescription = card.name,
-                modifier = Modifier.width(56.dp).height(78.dp),
-                contentScale = ContentScale.Fit
-            )
-            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(
-                    (if (selected) "✓ " else "") + card.name,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${card.set} · ${card.number}",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(cardDetailsLine(card, price), style = MaterialTheme.typography.bodySmall)
-                Text(
-                    if (binderName != null) "${card.category.label} · $binderName" else card.category.label,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
 /** Messaggio al termine dell'aggiornamento dei prezzi. */
 fun priceResultMessage(found: Int?, checked: Int): String = when {
     found == null -> "Impossibile contattare TCGdex. Controlla la connessione."
@@ -1385,4 +1179,89 @@ fun toastWishlist(context: Context, added: Boolean?) {
         null -> "Impossibile aggiungere alla wishlist"
     }
     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+}
+
+
+/** Ricerca per nome nel catalogo offline; il risultato scelto passa al dialog di tipologia e binder. */
+@Composable
+fun ManualSearchDialog(
+    title: String = "Cerca una carta",
+    onSearch: (String, (List<CatalogCard>?) -> Unit) -> Unit,
+    onPick: (CatalogCard) -> Unit,
+    onWish: ((CatalogCard) -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<CatalogCard>>(emptyList()) }
+    var failed by remember { mutableStateOf(false) }
+    var searched by remember { mutableStateOf(false) }
+
+    // Si cerca dopo una breve pausa nella digitazione; le risposte vecchie vengono ignorate.
+    LaunchedEffect(query) {
+        val text = query.trim()
+        if (text.length < 2) {
+            results = emptyList()
+            failed = false
+            searched = false
+            return@LaunchedEffect
+        }
+        delay(300)
+        onSearch(text) { found ->
+            if (text == query.trim()) {
+                failed = found == null
+                results = found.orEmpty()
+                searched = true
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Nome della carta") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                    when {
+                        query.trim().length < 2 -> Text("Scrivi almeno 2 lettere.", style = MaterialTheme.typography.bodySmall)
+                        failed -> Text("Errore nella ricerca nel catalogo.", style = MaterialTheme.typography.bodySmall)
+                        searched && results.isEmpty() -> Text("Nessuna carta trovata.", style = MaterialTheme.typography.bodySmall)
+                        else -> results.forEach { card ->
+                            val total = if (card.setTotal > 0) "/${card.setTotal}" else ""
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().clickable { onPick(card) }.padding(vertical = 4.dp)
+                            ) {
+                                AsyncImage(
+                                    model = card.imageUrl.ifBlank { null },
+                                    contentDescription = card.name,
+                                    modifier = Modifier.width(40.dp).height(56.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                                    Text(card.name, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "${card.setName} · ${card.number}$total · ${card.lang.uppercase()}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                if (onWish != null) {
+                                    TextButton(onClick = { onWish(card) }) { Text("Wishlist") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Chiudi") } }
+    )
 }

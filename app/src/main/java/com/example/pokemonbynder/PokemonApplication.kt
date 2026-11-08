@@ -24,6 +24,7 @@ class PokemonApplication : Application() {
     lateinit var catalogDatabase: CatalogDatabase
     lateinit var repository: PokemonRepository
     lateinit var backupManager: BackupManager
+    lateinit var settings: SettingsStore
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _catalogReady = MutableStateFlow(false)
@@ -46,6 +47,7 @@ class PokemonApplication : Application() {
         ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
 
         backupManager = BackupManager(database)
+        settings = SettingsStore(this)
 
         catalogDatabase = Room.databaseBuilder(
             this,
