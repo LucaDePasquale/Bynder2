@@ -6,7 +6,9 @@ import androidx.room.withTransaction
 import com.example.pokemonbynder.scanner.CardText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
 import java.io.BufferedReader
+import java.io.FileNotFoundException
 import java.io.InputStreamReader
 import java.util.zip.GZIPInputStream
 
@@ -61,8 +63,8 @@ class CatalogImporter(
         try {
             database.withTransaction {
                 dao.clear()
-                context.assets.open(ASSET_NAME).use { raw ->
-                    BufferedReader(InputStreamReader(GZIPInputStream(raw), Charsets.UTF_8)).use { reader ->
+                openCatalogReader().use { reader ->
+                    run {
                         reader.readLine() // intestazione
                         val batch = ArrayList<CatalogCard>(BATCH_SIZE)
                         while (true) {
@@ -88,6 +90,34 @@ class CatalogImporter(
             Log.e("CatalogImporter", "Errore durante l'importazione del catalogo", e)
             throw e
         }
+    }
+
+    /**
+     * Apre il file del catalogo. Se il nome non c'è (o la compilazione l'ha cambiato, ad esempio
+     * togliendo ".gz") prova le alternative; riconosce da solo se il file è compresso.
+     * Se non trova nulla l'errore elenca i file presenti, così si capisce cosa manca.
+     */
+    private fun openCatalogReader(): BufferedReader {
+        for (name in listOf(ASSET_NAME, "catalog.tsv", "catalog")) {
+            val stream = try {
+                context.assets.open(name)
+            } catch (e: FileNotFoundException) {
+                continue
+            }
+            val buffered = BufferedInputStream(stream)
+            buffered.mark(2)
+            val first = buffered.read()
+            val second = buffered.read()
+            buffered.reset()
+            val input = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
+            return BufferedReader(InputStreamReader(input, Charsets.UTF_8))
+        }
+        val present = try {
+            context.assets.list("")?.joinToString(", ")
+        } catch (e: Exception) {
+            null
+        }
+        throw FileNotFoundException("$ASSET_NAME non è nel pacchetto dell'app. File presenti negli assets: ${present ?: "nessuno"}")
     }
 
     // lang, set_code, set_name, number, set_total, name, rarity, artist, card_type, img, [alias]
