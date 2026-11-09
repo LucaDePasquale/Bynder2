@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.pokemonbynder.data.model.CardEntryId
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.stats.CardLanguage
 
@@ -55,8 +56,8 @@ fun CardMenuButton(onEdit: () -> Unit, onDelete: () -> Unit, modifier: Modifier 
 
 /** Immagine grande di una carta, con un riquadro al suo posto se la carta non ha immagine. */
 @Composable
-fun LargeCardImage(imageUrl: String, name: String, modifier: Modifier = Modifier) {
-    if (imageUrl.isBlank()) {
+fun LargeCardImage(imageUrl: String, name: String, modifier: Modifier = Modifier, catalogKey: String = "") {
+    if (imageUrl.isBlank() && catalogKey.isBlank()) {
         Box(
             modifier = modifier
                 .aspectRatio(CARD_ASPECT_RATIO)
@@ -67,9 +68,10 @@ fun LargeCardImage(imageUrl: String, name: String, modifier: Modifier = Modifier
             Text("Immagine non disponibile", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
         }
     } else {
-        AsyncImage(
-            model = imageUrl,
-            contentDescription = name,
+        CardImage(
+            imageUrl = imageUrl,
+            catalogKey = catalogKey,
+            name = name,
             modifier = modifier.aspectRatio(CARD_ASPECT_RATIO),
             contentScale = ContentScale.Fit
         )
@@ -100,9 +102,10 @@ fun CardItem(
     ) {
         Column {
             Box {
-                AsyncImage(
-                    model = card.imageUrl.ifBlank { null },
-                    contentDescription = card.name,
+                CardImage(
+                    imageUrl = card.imageUrl,
+                    catalogKey = CardEntryId.catalogKeyOf(card.id),
+                    name = card.name,
                     modifier = Modifier.fillMaxWidth().height(220.dp).padding(top = 8.dp),
                     contentScale = ContentScale.Fit
                 )
@@ -166,9 +169,10 @@ fun CardRow(
         )
     ) {
         Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = card.imageUrl.ifBlank { null },
-                contentDescription = card.name,
+            CardImage(
+                imageUrl = card.imageUrl,
+                catalogKey = CardEntryId.catalogKeyOf(card.id),
+                name = card.name,
                 modifier = Modifier.width(56.dp).height(78.dp),
                 contentScale = ContentScale.Fit
             )
@@ -228,7 +232,8 @@ fun CardPreviewDialog(
                 LargeCardImage(
                     imageUrl = card.imageUrl,
                     name = card.name,
-                    modifier = Modifier.fillMaxWidth(0.85f)
+                    modifier = Modifier.fillMaxWidth(0.85f),
+                    catalogKey = CardEntryId.catalogKeyOf(card.id)
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(card.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)

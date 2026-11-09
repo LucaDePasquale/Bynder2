@@ -27,6 +27,10 @@ interface PokemonDao {
     @Query("DELETE FROM pokemon_cards WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>)
 
+    /** Aggiorna l'immagine della carta in tutti i binder (l'id negli altri binder è "binder|chiave"). */
+    @Query("UPDATE pokemon_cards SET imageUrl = :imageUrl WHERE id = :key OR id LIKE '%|' || :key")
+    suspend fun updateImageByKey(key: String, imageUrl: String)
+
     @Query("UPDATE pokemon_cards SET imageUrl = :imageUrl WHERE id = :id")
     suspend fun updateImage(id: String, imageUrl: String)
 

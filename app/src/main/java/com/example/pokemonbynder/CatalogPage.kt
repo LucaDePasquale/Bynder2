@@ -98,20 +98,30 @@ fun CatalogPickerDialog(title: String, onDismiss: () -> Unit, content: @Composab
 /** Scelta di cosa si cerca: il nome della carta (con numero opzionale) oppure l'autore. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchModeChips(byArtist: Boolean, onChange: (Boolean) -> Unit) {
+fun SearchModeChips(
+    byArtist: Boolean,
+    onChange: (Boolean) -> Unit,
+    online: Boolean? = null,
+    onOnlineChange: (Boolean) -> Unit = {}
+) {
     Row(
-        modifier = Modifier.padding(horizontal = 12.dp),
+        modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         FilterChip(selected = !byArtist, onClick = { onChange(false) }, label = { Text("Nome e numero") })
         FilterChip(selected = byArtist, onClick = { onChange(true) }, label = { Text("Autore") })
+        if (online != null) {
+            FilterChip(selected = online, onClick = { onOnlineChange(!online) }, label = { Text("Cerca online") })
+        }
     }
 }
 
 /** Suggerimento sotto il campo di ricerca, diverso a seconda di cosa si cerca. */
-fun searchHint(byArtist: Boolean): String =
-    if (byArtist) "Scrivi il nome dell'illustratore (es. Mitsuhiro Arita) per vedere le sue carte."
+fun searchHint(byArtist: Boolean, online: Boolean = false): String =
+    if (online) "Ricerca online su TCGdex, anche per le carte che non sono nel catalogo (serve internet). " +
+        (if (byArtist) "Scrivi il nome dell'illustratore." else "Scrivi il nome, con il numero se vuoi (Pikachu 25).")
+    else if (byArtist) "Scrivi il nome dell'illustratore (es. Mitsuhiro Arita) per vedere le sue carte."
     else "Scrivi il nome della carta. Puoi aggiungere il numero (Pikachu 25) o anche le carte del set (Pikachu 25/102)."
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -129,26 +139,29 @@ private fun CatalogSearch(
     var searched by remember { mutableStateOf(false) }
     var language by remember { mutableStateOf<String?>(null) }
     var byArtist by rememberSaveable { mutableStateOf(false) }
+    var online by rememberSaveable { mutableStateOf(false) }
     var preview by remember { mutableStateOf<CatalogCard?>(null) }
     val owned = remember(ownedCards) { OwnedIndex(ownedCards) }
 
     // Si cerca dopo una breve pausa nella digitazione; le risposte vecchie vengono ignorate.
-    LaunchedEffect(query, catalogReady, byArtist) {
+    LaunchedEffect(query, catalogReady, byArtist, online) {
         val text = query.trim()
-        if (text.length < 2 || !catalogReady) {
+        if (text.length < 2 || (!catalogReady && !online)) {
             results = emptyList()
             failed = false
             searched = false
             return@LaunchedEffect
         }
-        delay(300)
-        viewModel.searchCatalog(text, byArtist) { found ->
+        delay(if (online) 600 else 300)
+        val onResult: (List<CatalogCard>?) -> Unit = { found ->
             if (text == query.trim()) {
                 failed = found == null
                 results = found.orEmpty()
                 searched = true
             }
         }
+        if (online) viewModel.searchOnline(text, byArtist, onResult)
+        else viewModel.searchCatalog(text, byArtist, onResult)
     }
 
     val languages = remember(results) { results.map { it.lang }.distinct().sorted() }
@@ -171,7 +184,7 @@ private fun CatalogSearch(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
         )
 
-        SearchModeChips(byArtist = byArtist, onChange = { byArtist = it })
+        SearchModeChips(byArtist = byArtist, onChange = { byArtist = it }, online = online, onOnlineChange = { online = it })
         Spacer(modifier = Modifier.height(4.dp))
 
         if (languages.size > 1) {
@@ -193,10 +206,10 @@ private fun CatalogSearch(
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val message = when {
-                !catalogReady -> "Il catalogo si sta preparando…"
-                query.trim().length < 2 -> searchHint(byArtist) + "\nLa ricerca copre il catalogo in italiano e in inglese."
-                failed -> "Errore nella ricerca nel catalogo."
-                searched && shown.isEmpty() -> "Nessuna carta trovata."
+                !catalogReady && !online -> "Il catalogo si sta preparando…"
+                query.trim().length < 2 -> searchHint(byArtist, online) + if (online) "" else "\nLa ricerca copre il catalogo in italiano, inglese e giapponese."
+                failed -> if (online) "Ricerca online non riuscita: controlla la connessione a internet." else "Errore nella ricerca nel catalogo."
+                searched && shown.isEmpty() -> if (online) "Nessuna carta trovata online." else "Nessuna carta trovata. Prova con «Cerca online»."
                 else -> null
             }
             if (message != null) {
@@ -214,7 +227,20 @@ private fun CatalogSearch(
                 ) {
                     items(shown, key = { it.catalogKey }) { card ->
                         val numbers = owned.numbersFor(card.lang, card.setCode, card.setName)
-                        CatalogResult(card = card, isOwned = owned.isOwned(numbers, card.number), showArtist = byArtist, onClick = { preview = card })
+                        CatalogResult(
+                            card = card,
+                            isOwned = owned.isOwned(numbers, card.number),
+                            showArtist = byArtist,
+                            onClick = {
+                                preview = card
+                                if (online) {
+                                    // Dall'elenco online mancano set e rarità: si completano all'apertura
+                                    viewModel.completeOnlineCard(card) { full ->
+                                        if (preview?.catalogKey == full.catalogKey) preview = full
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -246,18 +272,13 @@ private fun CatalogResult(card: CatalogCard, isOwned: Boolean, showArtist: Boole
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column {
-            if (card.imageUrl.isBlank()) {
-                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                    Text("Nessuna immagine", style = MaterialTheme.typography.bodySmall)
-                }
-            } else {
-                AsyncImage(
-                    model = card.imageUrl,
-                    contentDescription = card.name,
-                    modifier = Modifier.fillMaxWidth().height(200.dp).padding(top = 8.dp),
-                    contentScale = ContentScale.Fit
-                )
-            }
+            CardImage(
+                imageUrl = card.imageUrl,
+                catalogKey = card.catalogKey,
+                name = card.name,
+                modifier = Modifier.fillMaxWidth().height(200.dp).padding(top = 8.dp),
+                contentScale = ContentScale.Fit
+            )
             Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                 Text(card.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -304,7 +325,7 @@ fun CatalogCardDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                LargeCardImage(imageUrl = card.imageUrl, name = card.name, modifier = Modifier.fillMaxWidth(0.85f))
+                LargeCardImage(imageUrl = card.imageUrl, name = card.name, modifier = Modifier.fillMaxWidth(0.85f), catalogKey = card.catalogKey)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(card.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 if (isOwned) {

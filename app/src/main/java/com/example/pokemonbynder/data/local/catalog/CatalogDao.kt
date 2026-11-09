@@ -54,6 +54,9 @@ interface CatalogDao {
     @Query("SELECT * FROM catalog_cards WHERE lang = :lang AND setCode = :setCode")
     suspend fun cardsOfSet(lang: String, setCode: String): List<CatalogCard>
 
+    @Query("UPDATE catalog_cards SET imageUrl = :url WHERE lang = :lang AND setCode = :setCode AND number = :number")
+    suspend fun updateImage(lang: String, setCode: String, number: String, url: String)
+
     @Query("SELECT DISTINCT nameNorm FROM catalog_cards WHERE lang != 'ja'")
     suspend fun distinctNames(): List<String>
 }

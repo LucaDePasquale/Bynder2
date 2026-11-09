@@ -9,7 +9,8 @@ data class CatalogQuery(
     val name: String = "",       // già normalizzato (vedi CardText.normalizeName)
     val artist: String = "",     // testo cercato nell'autore
     val numberKey: String = "",  // numero normalizzato (vedi CardText.normalizeNumber), vuoto se non indicato
-    val total: Int = 0           // carte del set stampate sulla carta (es. 102), 0 se non indicato
+    val total: Int = 0,          // carte del set stampate sulla carta (es. 102), 0 se non indicato
+    val rawName: String = ""     // nome come scritto (senza il numero), per le ricerche online
 ) {
     val isSearchable: Boolean
         get() = name.length >= 2 || artist.length >= 2 || numberKey.isNotEmpty() || total > 0
@@ -44,6 +45,6 @@ object CatalogQueryParser {
                 rest = rest.removeRange(trailing.range).trim()
             }
         }
-        return CatalogQuery(name = CardText.normalizeName(rest), numberKey = key, total = total)
+        return CatalogQuery(name = CardText.normalizeName(rest), numberKey = key, total = total, rawName = rest)
     }
 }

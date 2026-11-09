@@ -153,9 +153,10 @@ private fun WishRow(wish: WishlistCard, price: Double?, onFound: () -> Unit, onR
         shape = RoundedCornerShape(12.dp)
     ) {
         Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = wish.imageUrl.ifBlank { null },
-                contentDescription = wish.name,
+            CardImage(
+                imageUrl = wish.imageUrl,
+                catalogKey = wish.id,
+                name = wish.name,
                 modifier = Modifier.width(56.dp).height(78.dp),
                 contentScale = ContentScale.Fit
             )
@@ -196,9 +197,10 @@ fun WishlistFoundDialog(
         title = { Text("Carta trovata!") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                AsyncImage(
-                    model = wish.imageUrl.ifBlank { null },
-                    contentDescription = wish.name,
+                CardImage(
+                    imageUrl = wish.imageUrl,
+                    catalogKey = wish.id,
+                    name = wish.name,
                     modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentScale = ContentScale.Fit
                 )

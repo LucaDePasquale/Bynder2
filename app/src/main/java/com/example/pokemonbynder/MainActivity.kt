@@ -73,6 +73,10 @@ import com.example.pokemonbynder.scanner.ScanSource
 import com.example.pokemonbynder.ui.PokemonViewModel
 import com.example.pokemonbynder.ui.SortOrder
 import com.example.pokemonbynder.ui.scanner.CardScannerAnalyzer
+import com.example.pokemonbynder.ui.scanner.PhotoReader
+import com.example.pokemonbynder.ui.scanner.PhotoDraft
+import com.example.pokemonbynder.scanner.CardText
+import android.net.Uri
 import com.example.pokemonbynder.ui.scanner.ScannerGuide
 import com.example.pokemonbynder.ui.theme.PokemonBynderTheme
 import com.example.pokemonbynder.ui.theme.appBarColor
@@ -101,6 +105,7 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.DARK -> true
             }
             PokemonBynderTheme(darkTheme = dark) {
+              CompositionLocalProvider(LocalImageResolver provides app.imageResolver) {
                 val viewModel: PokemonViewModel = viewModel(
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
@@ -110,6 +115,7 @@ class MainActivity : ComponentActivity() {
                     }
                 )
                 MainScreen(viewModel, app.catalogError, app.settings)
+              }
             }
         }
     }
@@ -263,6 +269,37 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
         }
     }
 
+    // Carta da una foto della galleria (non serve nessun permesso)
+    var photoChoice by remember { mutableStateOf<Uri?>(null) }
+    var customDraft by remember { mutableStateOf<Pair<Uri, PhotoDraft>?>(null) }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) photoChoice = uri
+    }
+    fun createFromPhoto(uri: Uri) {
+        Toast.makeText(context, "Leggo la foto…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val analysis = PhotoReader.analyze(context, uri)
+            customDraft = uri to PhotoReader.draftOf(analysis)
+        }
+    }
+    fun recognizePhoto(uri: Uri) {
+        Toast.makeText(context, "Leggo la foto…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val analysis = PhotoReader.analyze(context, uri)
+            if (analysis.readings.isEmpty()) {
+                Toast.makeText(context, "Nella foto non vedo testo: compila tu i dati della carta", Toast.LENGTH_LONG).show()
+                customDraft = uri to PhotoReader.draftOf(analysis)
+            } else {
+                viewModel.identifyPhoto(analysis.readings) { found ->
+                    if (!found) {
+                        Toast.makeText(context, "Carta non trovata nel catalogo: la creo dalla foto", Toast.LENGTH_LONG).show()
+                        customDraft = uri to PhotoReader.draftOf(analysis)
+                    }
+                }
+            }
+        }
+    }
+
     var hasCameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
@@ -371,6 +408,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                             onClick = { showCatalogAdd = true },
                             icon = { Icon(Icons.Default.Search, null) },
                             text = { Text("Cerca nel catalogo") }
+                        )
+                        ExtendedFloatingActionButton(
+                            onClick = { photoLauncher.launch("image/*") },
+                            icon = { Icon(Icons.Default.Add, null) },
+                            text = { Text("Carta da foto") }
                         )
                         ExtendedFloatingActionButton(
                             onClick = { showSourceDialog = true },
@@ -484,6 +526,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         catalogSection = 0
                         goTo(AppScreen.CATALOG)
                     },
+                    onPhoto = { photoLauncher.launch("image/*") },
                     onClose = { viewModel.setScanning(false) }
                 )
             }
@@ -528,6 +571,63 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         cardToEdit = card
                     },
                     onDismiss = { previewId = null }
+                )
+            }
+
+            photoChoice?.let { uri ->
+                AlertDialog(
+                    onDismissRequest = { photoChoice = null },
+                    title = { Text("Cosa vuoi fare con la foto?") },
+                    text = { Text("Se la carta non è nel catalogo (es. carta vecchia) puoi crearne la versione digitale usando la tua foto.") },
+                    confirmButton = {
+                        Button(onClick = { photoChoice = null; createFromPhoto(uri) }) { Text("Crea carta digitale") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { photoChoice = null; recognizePhoto(uri) }) { Text("Riconosci nel catalogo") }
+                    }
+                )
+            }
+
+            customDraft?.let { pending ->
+                CustomCardDialog(
+                    photoUri = pending.first,
+                    draft = pending.second,
+                    binders = binders,
+                    defaultBinderId = defaultBinderId,
+                    defaultCondition = settings.defaultCondition,
+                    onConfirm = { input ->
+                        customDraft = null
+                        scope.launch {
+                            val image = PhotoReader.saveCopy(context, pending.first)
+                            if (image == null) {
+                                Toast.makeText(context, "Impossibile salvare la foto", Toast.LENGTH_LONG).show()
+                            } else {
+                                val setCode = "custom-" + CardText.normalizeName(input.setName).ifEmpty { "senza-set" }
+                                val number = input.number.ifBlank { System.currentTimeMillis().toString(36) }
+                                val card = CatalogCard(
+                                    lang = input.lang,
+                                    setCode = setCode,
+                                    setName = input.setName.ifBlank { "Carte create da foto" },
+                                    number = number,
+                                    numberKey = CardText.normalizeNumber(number),
+                                    setTotal = input.total,
+                                    name = input.name,
+                                    nameNorm = CardText.normalizeName(input.name),
+                                    rarity = input.rarity.ifBlank { null },
+                                    artist = input.artist.ifBlank { null },
+                                    cardType = "Pokémon",
+                                    imageUrl = image
+                                )
+                                viewModel.addCustomCard(card, input.category, input.binderId, input.condition) { success, quantity ->
+                                    val msg = if (success) {
+                                        "Creata e aggiunta: ${card.name}" + if (quantity > 1) " (ora ×$quantity)" else ""
+                                    } else "Errore nel salvataggio della carta"
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                    onDismiss = { customDraft = null }
                 )
             }
 
@@ -796,12 +896,21 @@ fun CandidateSelectionDialog(
         title = { Text(if (candidates.size > 1) "Quale carta è?" else "Carta rilevata") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                AsyncImage(
-                    model = selected.imageUrl.ifBlank { null },
-                    contentDescription = selected.name,
+                CardImage(
+                    imageUrl = selected.imageUrl,
+                    catalogKey = selected.catalogKey,
+                    name = selected.name,
                     modifier = Modifier.fillMaxWidth().height(260.dp),
                     contentScale = ContentScale.Fit
                 )
+                val extra = listOfNotNull(
+                    selected.artist?.takeIf { it.isNotBlank() }?.let { "Autore: $it" },
+                    selected.rarity?.takeIf { it.isNotBlank() }?.let { "Rarità: $it" }
+                ).joinToString(" · ")
+                if (extra.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(extra, style = MaterialTheme.typography.bodySmall)
+                }
                 Spacer(modifier = Modifier.height(8.dp))
 
                 candidates.forEach { candidate ->
@@ -1151,7 +1260,7 @@ private class PreviewHolder {
 }
 
 @Composable
-fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onManual: () -> Unit, onClose: () -> Unit) {
+fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onManual: () -> Unit, onPhoto: () -> Unit, onClose: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -1267,18 +1376,20 @@ fun ScannerOverlay(sourceLabel: String, onReading: (ScanReading) -> Unit, onManu
 
         Row(
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (camera?.cameraInfo?.hasFlashUnit() == true) {
-                Button(onClick = {
-                    torchOn = !torchOn
-                    camera?.cameraControl?.enableTorch(torchOn)
-                }) { Text(if (torchOn) "Spegni torcia" else "Torcia") }
+                Button(
+                    onClick = {
+                        torchOn = !torchOn
+                        camera?.cameraControl?.enableTorch(torchOn)
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) { Text(if (torchOn) "Spegni" else "Torcia") }
             }
-            Button(
-                onClick = onManual,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.6f), contentColor = Color.White)
-            ) { Text("Cerca a mano") }
+            val darkButton = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.6f), contentColor = Color.White)
+            Button(onClick = onPhoto, colors = darkButton, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Da foto") }
+            Button(onClick = onManual, colors = darkButton, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Cerca a mano") }
         }
 
         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
@@ -1368,9 +1479,10 @@ fun ManualSearchDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth().clickable { onPick(card) }.padding(vertical = 4.dp)
                             ) {
-                                AsyncImage(
-                                    model = card.imageUrl.ifBlank { null },
-                                    contentDescription = card.name,
+                                CardImage(
+                                    imageUrl = card.imageUrl,
+                                    catalogKey = card.catalogKey,
+                                    name = card.name,
                                     modifier = Modifier.width(40.dp).height(56.dp),
                                     contentScale = ContentScale.Fit
                                 )

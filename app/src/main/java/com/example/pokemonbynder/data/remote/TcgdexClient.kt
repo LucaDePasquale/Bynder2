@@ -63,6 +63,7 @@ class TcgdexClient {
         const val MAX_DETAILS_WITH_NUMBER = 15
         const val MAX_DETAILS_NAME_ONLY = 6
         const val MAX_PARALLEL_REQUESTS = 4
+        const val MAX_ONLINE_RESULTS = 60
         const val MAX_CACHE_ENTRIES = 300
         const val PREFIX_FALLBACK_LENGTH = 4
         val wordPattern = Regex("""[\p{L}'’\-]{3,}""")
@@ -73,6 +74,70 @@ class TcgdexClient {
 
     private val briefCache = ConcurrentHashMap<String, List<Brief>>()
     private val cardCache = ConcurrentHashMap<String, CatalogCard>()
+
+    /**
+     * Ricerca libera online, per nome o per illustratore, nelle lingue indicate.
+     * I risultati hanno solo i dati dell'elenco (nome, numero, immagine): per il resto vedi [completeCard].
+     * Lancia [IOException] solo se la rete non ha risposto in nessuna lingua.
+     */
+    suspend fun searchOnline(text: String, byArtist: Boolean, languages: List<String>): List<CatalogCard> =
+        withContext(Dispatchers.IO) {
+            val term = text.trim()
+            if (term.length < 2) return@withContext emptyList()
+            val field = if (byArtist) "illustrator" else "name"
+            val outcomes = coroutineScope {
+                languages.map { lang ->
+                    async {
+                        try {
+                            Result.success(requestList(lang, term, field).take(MAX_ONLINE_RESULTS).map { fromBrief(lang, it) })
+                        } catch (e: IOException) {
+                            Result.failure(e)
+                        }
+                    }
+                }.awaitAll()
+            }
+            val failure = outcomes.firstOrNull { it.isFailure }?.exceptionOrNull()
+            if (failure != null && outcomes.all { it.isFailure }) throw failure as IOException
+            outcomes.flatMap { it.getOrNull().orEmpty() }
+        }
+
+    /** Completa una carta trovata con [searchOnline]: set, totale, rarità, illustratore e tipo. */
+    suspend fun completeCard(card: CatalogCard): CatalogCard = withContext(Dispatchers.IO) {
+        val id = "${card.setCode}-${card.number}"
+        val key = "${card.lang}:$id"
+        cardCache[key] ?: loadDetails(card.lang, Brief(id, card.number, card.name, card.imageUrl))?.also {
+            if (cardCache.size >= MAX_CACHE_ENTRIES) cardCache.clear()
+            cardCache[key] = it
+        } ?: card
+    }
+
+    /**
+     * Cerca online l'immagine di una carta (stesso set e numero): prima nella sua lingua, poi in
+     * italiano, inglese e francese. Restituisce null se nessuna lingua ha l'immagine.
+     * Lancia [IOException] se la rete non risponde.
+     */
+    suspend fun findImage(lang: String, setCode: String, number: String): String? = withContext(Dispatchers.IO) {
+        val languages = if (lang == "ja") listOf("ja") else (listOf(lang, "it", "en", "fr")).distinct()
+        val setCodes = listOf(setCode, setCode.lowercase()).distinct()
+        for (language in languages) {
+            for (code in setCodes) {
+                val image = imageOf(language, "$code-$number")
+                if (image != null) return@withContext image
+            }
+        }
+        null
+    }
+
+    private fun imageOf(lang: String, id: String): String? {
+        return try {
+            val json = JSONObject(get("$BASE_URL/$lang/cards/${encode(id)}"))
+            json.text("image")?.let { imageUrl(it) }
+        } catch (e: FileNotFoundException) {
+            null
+        } catch (e: JSONException) {
+            null
+        }
+    }
 
     suspend fun findCards(reading: ScanReading): TcgdexSearch = withContext(Dispatchers.IO) {
         val words = reading.nameLines.mapNotNull { searchWord(it) }.distinct().take(MAX_WORDS)
@@ -203,9 +268,9 @@ class TcgdexClient {
         return result
     }
 
-    private fun requestList(lang: String, word: String): List<Brief> {
+    private fun requestList(lang: String, word: String, field: String = "name"): List<Brief> {
         val body = try {
-            get("$BASE_URL/$lang/cards?name=${encode(word)}")
+            get("$BASE_URL/$lang/cards?$field=${encode(word)}")
         } catch (e: FileNotFoundException) {
             return emptyList()
         }

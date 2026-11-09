@@ -171,6 +171,34 @@ class PokemonRepository(
         return quantity
     }
 
+    /**
+     * Cerca online (TCGdex) in italiano, inglese e giapponese, per nome (con numero opzionale) o autore.
+     * Serve per le carte che non sono nel catalogo offline. Lancia IOException se manca la rete.
+     */
+    suspend fun searchOnline(text: String, byArtist: Boolean): List<CatalogCard> {
+        val query = CatalogQueryParser.parse(text, byArtist)
+        val term = if (byArtist) query.artist else query.rawName
+        if (term.length < 2) return emptyList()
+        val found = tcgdex.searchOnline(term, byArtist, listOf("it", "en", "ja"))
+        return if (query.numberKey.isNotEmpty()) found.filter { it.numberKey == query.numberKey } else found
+    }
+
+    /** Aggiunge i dati mancanti a una carta trovata online (set, rarità, autore...). */
+    suspend fun completeOnlineCard(card: CatalogCard): CatalogCard = tcgdex.completeCard(card)
+
+    /** Cerca online l'immagine di una carta e la salva dove la carta compare; null se non esiste. */
+    suspend fun findImageOnline(catalogKey: String): String? {
+        val lang = catalogKey.substringBefore(':')
+        val setCode = catalogKey.substringAfter(':', "").substringBeforeLast(':', "")
+        val number = catalogKey.substringAfterLast(':')
+        if (setCode.isEmpty() || number.isEmpty()) return null
+        val url = tcgdex.findImage(lang, setCode, number) ?: return null
+        catalogDao.updateImage(lang, setCode, number, url)
+        pokemonDao.updateImageByKey(catalogKey, url)
+        wishlistDao.updateImage(catalogKey, url)
+        return url
+    }
+
     private val setPairs: Map<String, String> by lazy { loadSetPairs() }
 
     /**

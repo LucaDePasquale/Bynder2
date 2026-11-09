@@ -16,6 +16,9 @@ interface WishlistDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(card: WishlistCard): Long
 
+    @Query("UPDATE wishlist_cards SET imageUrl = :imageUrl WHERE id = :id")
+    suspend fun updateImage(id: String, imageUrl: String)
+
     @Query("DELETE FROM wishlist_cards WHERE id = :id")
     suspend fun deleteById(id: String)
 }

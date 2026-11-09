@@ -21,6 +21,7 @@ import com.example.pokemonbynder.scanner.Candidate
 import com.example.pokemonbynder.scanner.PrintedNumber
 import com.example.pokemonbynder.scanner.ScanReading
 import com.example.pokemonbynder.scanner.ScanSource
+import com.example.pokemonbynder.data.repository.ScanMatch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -396,6 +397,33 @@ class PokemonViewModel(
     /** Ricerca manuale nel catalogo; [onResult] riceve null se la ricerca è fallita. */
     fun searchCatalog(text: String, onResult: (List<CatalogCard>?) -> Unit) = searchCatalog(text, false, onResult)
 
+    /** Ricerca online su TCGdex (it, en, ja); [onResult] riceve null se la rete non risponde. */
+    fun searchOnline(text: String, byArtist: Boolean, onResult: (List<CatalogCard>?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(repository.searchOnline(text, byArtist))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Ricerca online non riuscita", e)
+                onResult(null)
+            }
+        }
+    }
+
+    /** Completa una carta trovata online con i dati del set; se non riesce restituisce la carta com'è. */
+    fun completeOnlineCard(card: CatalogCard, onResult: (CatalogCard) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(repository.completeOnlineCard(card))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onResult(card)
+            }
+        }
+    }
+
     /** Come sopra; con [byArtist] il testo è il nome dell'autore della carta. */
     fun searchCatalog(text: String, byArtist: Boolean, onResult: (List<CatalogCard>?) -> Unit) {
         viewModelScope.launch {
@@ -411,6 +439,54 @@ class PokemonViewModel(
     }
 
     /** Carta scelta a mano dai risultati: si apre lo stesso dialog di tipologia e binder della scansione. */
+    /**
+     * Riconosce la carta da una foto: tra le letture (ipotesi diverse su dove sta la carta nella foto)
+     * sceglie quella che somiglia di più a una carta del catalogo e mostra i candidati.
+     * [onResult] riceve false se la carta non è stata riconosciuta.
+     */
+    fun identifyPhoto(readings: List<ScanReading>, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                var best: ScanMatch? = null
+                var bestScore = -1.0
+                for (reading in readings) {
+                    val match = repository.findCandidates(reading, _scanSource.value)
+                    val score = match.candidates.firstOrNull()?.score ?: continue
+                    if (score > bestScore) {
+                        best = match
+                        bestScore = score
+                    }
+                }
+                val chosen = best
+                if (chosen == null) {
+                    onResult(false)
+                } else {
+                    addingManually = true
+                    _isScanning.value = false
+                    _candidates.value = chosen.candidates
+                    onResult(true)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Riconoscimento dalla foto non riuscito", e)
+                onResult(false)
+            }
+        }
+    }
+
+    /** Aggiunge a un binder una carta creata dall'utente da una foto (non è nel catalogo). */
+    fun addCustomCard(
+        card: CatalogCard,
+        category: CardCategory,
+        binderId: Long,
+        condition: CardCondition,
+        onResult: (Boolean, Int) -> Unit
+    ) {
+        addingManually = true
+        confirmAndAddCard(card, category, binderId, condition, onResult)
+    }
+
     fun pickManualCard(card: CatalogCard) {
         addingManually = true
         _isScanning.value = false

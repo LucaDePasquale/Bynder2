@@ -72,6 +72,7 @@ private fun BinderCard(title: String, cards: List<PokemonCard>, prices: Map<Stri
     val copies = cards.sumOf { it.quantity }
     val value = cards.sumOf { (prices[CardEntryId.catalogKeyOf(it.id)] ?: 0.0) * it.quantity }
     val cover = cards.lastOrNull()?.imageUrl.orEmpty()
+    val coverKey = cards.lastOrNull()?.let { CardEntryId.catalogKeyOf(it.id) }.orEmpty()
 
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -88,10 +89,11 @@ private fun BinderCard(title: String, cards: List<PokemonCard>, prices: Map<Stri
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (cover.isNotBlank()) {
-                    AsyncImage(
-                        model = cover,
-                        contentDescription = title,
+                if (coverKey.isNotBlank()) {
+                    CardImage(
+                        imageUrl = cover,
+                        catalogKey = coverKey,
+                        name = title,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit
                     )

@@ -25,6 +25,7 @@ class PokemonApplication : Application() {
     lateinit var repository: PokemonRepository
     lateinit var backupManager: BackupManager
     lateinit var settings: SettingsStore
+    lateinit var imageResolver: ImageResolver
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _catalogReady = MutableStateFlow(false)
@@ -63,6 +64,8 @@ class PokemonApplication : Application() {
             database.priceDao(),
             loadSetPairs = { CatalogImporter.readSetPairs(this) }
         )
+
+        imageResolver = ImageResolver(repository)
 
         // Con un'installazione nuova non c'è ancora nessun binder: si crea quello di partenza.
         appScope.launch {

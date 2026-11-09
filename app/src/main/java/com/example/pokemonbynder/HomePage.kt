@@ -124,9 +124,10 @@ fun HomePage(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            AsyncImage(
-                                model = card.imageUrl.ifBlank { null },
-                                contentDescription = card.name,
+                            CardImage(
+                                imageUrl = card.imageUrl,
+                                catalogKey = CardEntryId.catalogKeyOf(card.id),
+                                name = card.name,
                                 modifier = Modifier.fillMaxWidth().height(150.dp).padding(top = 6.dp, start = 6.dp, end = 6.dp),
                                 contentScale = ContentScale.Fit
                             )
