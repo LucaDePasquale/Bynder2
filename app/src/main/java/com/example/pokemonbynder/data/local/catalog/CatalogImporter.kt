@@ -44,7 +44,7 @@ class CatalogImporter(
         }
 
         /** Incrementa questo numero ogni volta che sostituisci il file catalog.tsv.gz. */
-        const val CATALOG_VERSION = 2
+        const val CATALOG_VERSION = 3
 
         private const val PREFS = "catalog_import"
         private const val KEY_VERSION = "version"
@@ -90,7 +90,8 @@ class CatalogImporter(
         }
     }
 
-    // lang, set_code, set_name, number, set_total, name, rarity, artist, card_type, img
+    // lang, set_code, set_name, number, set_total, name, rarity, artist, card_type, img, [alias]
+    // "alias" (facoltativo): nomi della specie in italiano e inglese, per cercare le carte giapponesi.
     private fun parse(line: String): CatalogCard? {
         val p = line.split('\t')
         if (p.size < COLUMNS) return null
@@ -105,7 +106,7 @@ class CatalogImporter(
             numberKey = CardText.normalizeNumber(number),
             setTotal = p[4].toIntOrNull() ?: 0,
             name = name,
-            nameNorm = CardText.normalizeName(name),
+            nameNorm = CardText.normalizeName(if (p.size > COLUMNS) name + " " + p[COLUMNS] else name),
             rarity = p[6].ifBlank { null },
             artist = p[7].ifBlank { null },
             cardType = p[8],

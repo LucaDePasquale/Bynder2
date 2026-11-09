@@ -9,10 +9,10 @@ import java.text.Normalizer
  */
 object CardText {
     private val combiningMarks = Regex("\\p{M}+")
-    private val notAlphanumeric = Regex("[^a-z0-9]")
+    private val notAlphanumeric = Regex("[^\\p{L}\\p{N}]")
     private val numberShape = Regex("^([a-z]*)(\\d+)([a-z]?)$")
 
-    /** "Pokémon Ex" -> "pokemonex": minuscolo, senza accenti, senza spazi e simboli. */
+    /** "Pokémon Ex" -> "pokemonex": minuscolo, senza accenti, senza spazi e simboli (le lettere di ogni alfabeto restano, ad es. i caratteri giapponesi). */
     fun normalizeName(text: String): String {
         val decomposed = Normalizer.normalize(text, Normalizer.Form.NFD)
         val noMarks = combiningMarks.replace(decomposed, "")

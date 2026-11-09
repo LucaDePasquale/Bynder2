@@ -15,10 +15,10 @@ interface CatalogDao {
     @Query("DELETE FROM catalog_cards")
     suspend fun clear()
 
-    @Query("SELECT * FROM catalog_cards WHERE numberKey = :key")
+    @Query("SELECT * FROM catalog_cards WHERE numberKey = :key AND lang != 'ja'")
     suspend fun byNumberKey(key: String): List<CatalogCard>
 
-    @Query("SELECT * FROM catalog_cards WHERE nameNorm IN (:names)")
+    @Query("SELECT * FROM catalog_cards WHERE nameNorm IN (:names) AND lang != 'ja'")
     suspend fun byNameNorm(names: List<String>): List<CatalogCard>
 
     /** Ricerca manuale: nomi che contengono il testo (già normalizzato), prima quelli che iniziano così. */
@@ -54,6 +54,6 @@ interface CatalogDao {
     @Query("SELECT * FROM catalog_cards WHERE lang = :lang AND setCode = :setCode")
     suspend fun cardsOfSet(lang: String, setCode: String): List<CatalogCard>
 
-    @Query("SELECT DISTINCT nameNorm FROM catalog_cards")
+    @Query("SELECT DISTINCT nameNorm FROM catalog_cards WHERE lang != 'ja'")
     suspend fun distinctNames(): List<String>
 }

@@ -892,7 +892,7 @@ fun EditCardDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Lingua della carta:")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("it", "en").forEach { code ->
+                    (listOf("it", "en") + CardLanguage.of(card.id)).distinct().forEach { code ->
                         FilterChip(
                             selected = language == code,
                             onClick = { language = code },
