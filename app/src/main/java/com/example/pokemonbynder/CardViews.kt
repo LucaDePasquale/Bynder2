@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,7 +33,8 @@ const val CARD_ASPECT_RATIO = 0.716f
 
 /** I tre puntini con il menu delle azioni su una carta. */
 @Composable
-fun CardMenuButton(onEdit: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier) {
+fun CardMenuButton(onEdit: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier, card: PokemonCard? = null) {
+    val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
         IconButton(
@@ -46,6 +48,12 @@ fun CardMenuButton(onEdit: () -> Unit, onDelete: () -> Unit, modifier: Modifier 
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Modifica") }, onClick = { open = false; onEdit() })
+            if (card != null) {
+                DropdownMenuItem(
+                    text = { Text("Apri su Cardmarket") },
+                    onClick = { open = false; openCardmarket(context, card.name, card.number, CardLanguage.of(card.id)) }
+                )
+            }
             DropdownMenuItem(
                 text = { Text("Elimina", color = MaterialTheme.colorScheme.error) },
                 onClick = { open = false; onDelete() }
@@ -111,6 +119,7 @@ fun CardItem(
                 )
                 if (showMenu) {
                     CardMenuButton(
+                        card = card,
                         onEdit = onEdit,
                         onDelete = onDelete,
                         modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
@@ -197,7 +206,7 @@ fun CardRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            if (showMenu) CardMenuButton(onEdit = onEdit, onDelete = onDelete)
+            if (showMenu) CardMenuButton(onEdit = onEdit, onDelete = onDelete, card = card)
         }
     }
 }
@@ -254,8 +263,12 @@ fun CardPreviewDialog(
                     if (price != null) DetailRow("Prezzo", formatPrice(price) + if (card.quantity > 1) " a copia" else "")
                 }
                 Spacer(modifier = Modifier.height(12.dp))
+                val previewContext = LocalContext.current
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = onDismiss) { Text("Chiudi") }
+                    TextButton(onClick = {
+                        openCardmarket(previewContext, card.name, card.number, CardLanguage.of(card.id))
+                    }) { Text("Cardmarket") }
                     Button(onClick = onEdit) { Text("Modifica") }
                 }
             }

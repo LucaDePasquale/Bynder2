@@ -1117,7 +1117,9 @@ fun SortAndViewBar(
     sortOrder: SortOrder,
     onSortChange: (SortOrder) -> Unit,
     listView: Boolean,
-    onToggleView: () -> Unit
+    onToggleView: () -> Unit,
+    pageView: Boolean = false,
+    onTogglePages: (() -> Unit)? = null
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -1143,7 +1145,8 @@ fun SortAndViewBar(
                 }
             }
         }
-        TextButton(onClick = onToggleView) { Text(if (listView) "Griglia" else "Lista") }
+        if (!pageView) TextButton(onClick = onToggleView) { Text(if (listView) "Griglia" else "Lista") }
+        if (onTogglePages != null) TextButton(onClick = onTogglePages) { Text(if (pageView) "Normale" else "Binder") }
     }
 }
 

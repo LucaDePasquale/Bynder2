@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -151,6 +152,7 @@ fun BinderDetail(
     val cardCounts by viewModel.cardCounts.collectAsState()
     val prices by viewModel.prices.collectAsState()
     val priceProgress by viewModel.priceProgress.collectAsState()
+    var pageView by rememberSaveable { mutableStateOf(false) }
     val languages = remember(allCards) { allCards.map { CardLanguage.of(it.id) }.distinct().sorted() }
 
     fun priceOf(card: PokemonCard): Double? = prices[CardEntryId.catalogKeyOf(card.id)]
@@ -203,7 +205,9 @@ fun BinderDetail(
             sortOrder = sortOrder,
             onSortChange = { viewModel.setSortOrder(it) },
             listView = listView,
-            onToggleView = onToggleView
+            onToggleView = onToggleView,
+            pageView = pageView,
+            onTogglePages = { pageView = !pageView }
         )
 
         ValueBar(
@@ -228,6 +232,14 @@ fun BinderDetail(
                 Text(
                     if (inScope == 0) "Binder vuoto. Scansiona una carta!" else "Nessuna carta corrisponde a ricerca e filtri.",
                     modifier = Modifier.align(Alignment.Center).padding(24.dp)
+                )
+            } else if (pageView) {
+                BinderPages(
+                    cards = cards,
+                    selectedIds = selectedIds,
+                    selecting = selecting,
+                    onOpenCard = onOpenCard,
+                    onToggleSelected = onToggleSelected
                 )
             } else if (listView) {
                 LazyColumn(

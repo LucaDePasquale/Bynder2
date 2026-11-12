@@ -117,6 +117,15 @@ fun WishlistTab(
 ) {
     val total = wishlist.sumOf { prices[it.id] ?: 0.0 }
     val withoutPrice = wishlist.count { prices[it.id] == null }
+    var preview by remember { mutableStateOf<WishlistCard?>(null) }
+    preview?.let { wish ->
+        WishPreviewDialog(
+            wish = wish,
+            price = prices[wish.id],
+            onFound = { preview = null; onFound(wish) },
+            onDismiss = { preview = null }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         ValueBar(
@@ -141,7 +150,7 @@ fun WishlistTab(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(wishlist, key = { it.id }) { wish ->
-                    WishRow(wish = wish, price = prices[wish.id], onFound = { onFound(wish) }, onRemove = { onRemove(wish) })
+                    WishRow(wish = wish, price = prices[wish.id], onOpen = { preview = wish }, onFound = { onFound(wish) }, onRemove = { onRemove(wish) })
                 }
             }
         }
@@ -149,11 +158,11 @@ fun WishlistTab(
 }
 
 @Composable
-private fun WishRow(wish: WishlistCard, price: Double?, onFound: () -> Unit, onRemove: () -> Unit) {
+private fun WishRow(wish: WishlistCard, price: Double?, onOpen: () -> Unit, onFound: () -> Unit, onRemove: () -> Unit) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         elevation = CardDefaults.cardElevation(2.dp),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -196,6 +205,53 @@ private fun WishRow(wish: WishlistCard, price: Double?, onFound: () -> Unit, onR
                         text = { Text("Rimuovi dalla wishlist", color = MaterialTheme.colorScheme.error) },
                         onClick = { menuOpen = false; onRemove() }
                     )
+                }
+            }
+        }
+    }
+}
+
+/** La carta della wishlist ingrandita, con il prezzo e il collegamento a Cardmarket. */
+@Composable
+private fun WishPreviewDialog(wish: WishlistCard, price: Double?, onFound: () -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 760.dp)
+        ) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                LargeCardImage(
+                    imageUrl = wish.imageUrl,
+                    name = wish.name,
+                    modifier = Modifier.fillMaxWidth(0.85f),
+                    catalogKey = wish.id
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(wish.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text("${wish.set} · ${wish.number}", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                Text(
+                    CardLanguage.label(CardLanguage.of(wish.id)) +
+                        (wish.rarity?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +
+                        (wish.artist?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center
+                )
+                if (price != null) Text(formatPrice(price), style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onDismiss) { Text("Chiudi") }
+                    TextButton(onClick = {
+                        openCardmarket(context, wish.name, wish.number, CardLanguage.of(wish.id))
+                    }) { Text("Cardmarket") }
+                    Button(onClick = onFound) { Text("Trovata!") }
                 }
             }
         }
