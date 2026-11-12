@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package com.example.pokemonbynder
 
 import android.Manifest
@@ -22,7 +24,6 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -33,7 +34,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -55,7 +56,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
 import com.example.pokemonbynder.data.backup.ImportResult
 import com.example.pokemonbynder.data.backup.ShareText
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
@@ -409,7 +409,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                 NavigationBar {
                     val items = listOf(
                         AppScreen.HOME to Icons.Default.Home,
-                        AppScreen.BINDERS to Icons.Default.List,
+                        AppScreen.BINDERS to Icons.AutoMirrored.Filled.List,
                         AppScreen.CATALOG to Icons.Default.Search,
                         AppScreen.WISHLIST to Icons.Default.Favorite,
                         AppScreen.SETTINGS to Icons.Default.Settings
@@ -454,7 +454,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                             if (selectedBinder != null && binders.size > 1) {
                                 ExtendedFloatingActionButton(
                                     onClick = { fabOpen = false; showImportFrom = true },
-                                    icon = { Icon(Icons.Default.List, null) },
+                                    icon = { Icon(Icons.AutoMirrored.Filled.List, null) },
                                     text = { Text("Da un altro binder") }
                                 )
                             }
@@ -1074,7 +1074,7 @@ fun EditCardDialog(
     onSetManualPrice: (Double?) -> Unit = {}
 ) {
     var priceText by remember(card.id) {
-        mutableStateOf(manualPrice?.let { String.format(java.util.Locale.US, "%.2f", it) }.orEmpty())
+        mutableStateOf(manualPrice?.let { String.format(Locale.US, "%.2f", it) }.orEmpty())
     }
     var selectedCategory by remember(card.id) { mutableStateOf(card.category) }
     var selectedBinderId by remember(card.id) { mutableStateOf(card.binderId) }
@@ -1228,30 +1228,6 @@ fun BinderPicker(binders: List<Binder>, selectedId: Long, onSelect: (Long) -> Un
     }
 }
 
-/** Barra scorrevole per filtrare le carte per tipologia (dentro il binder scelto o in tutti). */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CategoryFilterBar(selected: CardCategory?, onSelect: (CardCategory?) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("Tipologia:", style = MaterialTheme.typography.labelMedium)
-        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text("Tutte") })
-        CardCategory.entries.forEach { category ->
-            FilterChip(
-                selected = selected == category,
-                onClick = { onSelect(category) },
-                label = { Text(category.label) }
-            )
-        }
-    }
-}
-
 /** Chiede il nome di un binder (nuovo o da rinominare); non accetta nomi vuoti o già usati. */
 @Composable
 fun BinderNameDialog(
@@ -1320,23 +1296,6 @@ fun DeleteBinderDialog(
         confirmButton = { Button(onClick = onConfirm) { Text("Elimina") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
-}
-
-/** Elenco di tutte le tipologie, usato sia in aggiunta sia in modifica. */
-@Composable
-fun CategoryPicker(selected: CardCategory, onSelect: (CardCategory) -> Unit) {
-    CardCategory.entries.forEach { category ->
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onSelect(category) }
-                .padding(horizontal = 8.dp, vertical = 2.dp)
-        ) {
-            RadioButton(selected = selected == category, onClick = { onSelect(category) })
-            Text(category.label, modifier = Modifier.padding(start = 8.dp))
-        }
-    }
 }
 
 /** Chiede da dove cercare la carta; la scelta viene ricordata per la volta successiva. */
@@ -1553,97 +1512,3 @@ fun toastWishlist(context: Context, added: Boolean?) {
 }
 
 
-/** Ricerca per nome (con numero) o per autore nel catalogo offline; il risultato scelto passa al dialog successivo. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ManualSearchDialog(
-    title: String = "Cerca una carta",
-    onSearch: (String, Boolean, (List<CatalogCard>?) -> Unit) -> Unit,
-    onPick: (CatalogCard) -> Unit,
-    onWish: ((CatalogCard) -> Unit)? = null,
-    onDismiss: () -> Unit
-) {
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<CatalogCard>>(emptyList()) }
-    var failed by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf(false) }
-    var byArtist by remember { mutableStateOf(false) }
-
-    // Si cerca dopo una breve pausa nella digitazione; le risposte vecchie vengono ignorate.
-    LaunchedEffect(query, byArtist) {
-        val text = query.trim()
-        if (text.length < 2) {
-            results = emptyList()
-            failed = false
-            searched = false
-            return@LaunchedEffect
-        }
-        delay(300)
-        onSearch(text, byArtist) { found ->
-            if (text == query.trim()) {
-                failed = found == null
-                results = found.orEmpty()
-                searched = true
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text(if (byArtist) "Autore (es. Arita)" else "Nome e numero (es. Pikachu 25/102)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !byArtist, onClick = { byArtist = false }, label = { Text("Nome e numero") })
-                    FilterChip(selected = byArtist, onClick = { byArtist = true }, label = { Text("Autore") })
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Column(modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
-                    when {
-                        query.trim().length < 2 -> Text(searchHint(byArtist), style = MaterialTheme.typography.bodySmall)
-                        failed -> Text("Errore nella ricerca nel catalogo.", style = MaterialTheme.typography.bodySmall)
-                        searched && results.isEmpty() -> Text("Nessuna carta trovata.", style = MaterialTheme.typography.bodySmall)
-                        else -> results.forEach { card ->
-                            val total = if (card.setTotal > 0) "/${card.setTotal}" else ""
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().clickable { onPick(card) }.padding(vertical = 4.dp)
-                            ) {
-                                CardImage(
-                                    imageUrl = card.imageUrl,
-                                    catalogKey = card.catalogKey,
-                                    name = card.name,
-                                    modifier = Modifier.width(40.dp).height(56.dp),
-                                    contentScale = ContentScale.Fit
-                                )
-                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                                    Text(card.name, fontWeight = FontWeight.Bold)
-                                    Text(
-                                        "${card.setName} · ${card.number}$total · ${card.lang.uppercase()}",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                    if (byArtist && !card.artist.isNullOrBlank()) {
-                                        Text(card.artist, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
-                                if (onWish != null) {
-                                    TextButton(onClick = { onWish(card) }) { Text("Wishlist") }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Chiudi") } }
-    )
-}

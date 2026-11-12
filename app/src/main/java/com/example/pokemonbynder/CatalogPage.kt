@@ -1,6 +1,5 @@
 package com.example.pokemonbynder
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -24,13 +23,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil.compose.AsyncImage
 import com.example.pokemonbynder.data.local.catalog.CatalogCard
 import com.example.pokemonbynder.data.model.PokemonCard
 import com.example.pokemonbynder.data.stats.CardLanguage
 import com.example.pokemonbynder.data.stats.OwnedIndex
 import com.example.pokemonbynder.ui.PokemonViewModel
-import com.example.pokemonbynder.scanner.CardText
 import kotlinx.coroutines.delay
 
 /** Pagina "Catalogo": ricerca per nome tra tutte le carte (italiano e inglese) e sfoglia dei set. */
