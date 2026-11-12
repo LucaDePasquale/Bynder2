@@ -44,7 +44,8 @@ fun CatalogPage(
     onAddToWishlist: (List<CatalogCard>) -> Unit,
     section: Int,
     onSectionChange: (Int) -> Unit,
-    forBinder: Boolean = false
+    forBinder: Boolean = false,
+    forWishlist: Boolean = false
 ) {
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -58,7 +59,8 @@ fun CatalogPage(
                 catalogReady = catalogReady,
                 ownedCards = ownedCards,
                 onAddToBinder = onAddToBinder,
-                onWishlist = onWishlist
+                onWishlist = onWishlist,
+                forWishlist = forWishlist
             )
         } else {
             SetsTab(
@@ -131,7 +133,8 @@ private fun CatalogSearch(
     catalogReady: Boolean,
     ownedCards: List<PokemonCard>,
     onAddToBinder: (CatalogCard) -> Unit,
-    onWishlist: (CatalogCard) -> Unit
+    onWishlist: (CatalogCard) -> Unit,
+    forWishlist: Boolean = false
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<CatalogCard>>(emptyList()) }
@@ -252,6 +255,7 @@ private fun CatalogSearch(
         CatalogCardDialog(
             card = card,
             isOwned = owned.isOwned(numbers, card.number),
+            forWishlist = forWishlist,
             onAddToBinder = {
                 preview = null
                 onAddToBinder(card)
@@ -313,7 +317,8 @@ fun CatalogCardDialog(
     isOwned: Boolean,
     onAddToBinder: () -> Unit,
     onWishlist: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    forWishlist: Boolean = false
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -343,8 +348,13 @@ fun CatalogCardDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onDismiss) { Text("Chiudi") }
-                    OutlinedButton(onClick = onWishlist) { Text("Wishlist") }
-                    Button(onClick = onAddToBinder) { Text("Aggiungi") }
+                    if (forWishlist) {
+                        // Nella ricerca della wishlist l'unico pulsante mette la carta in wishlist
+                        Button(onClick = onWishlist) { Text("Aggiungi alla wishlist") }
+                    } else {
+                        OutlinedButton(onClick = onWishlist) { Text("Wishlist") }
+                        Button(onClick = onAddToBinder) { Text("Aggiungi") }
+                    }
                 }
             }
         }

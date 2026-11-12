@@ -778,7 +778,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         onWishlist = addCardToWishlist,
                         onAddToWishlist = addCardsToWishlist,
                         section = pickerSection,
-                        onSectionChange = { pickerSection = it }
+                        onSectionChange = { pickerSection = it },
+                        forWishlist = true
                     )
                 }
             }
