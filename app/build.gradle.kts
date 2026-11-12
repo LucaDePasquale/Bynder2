@@ -60,7 +60,7 @@ dependencies {
 
     // ML Kit
     implementation(libs.mlkit.text.recognition)
-    implementation(libs.mlkit.text.recognition.japanese)
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
 
     // Gson (usato dai TypeConverter di Room)
     implementation(libs.google.gson)
