@@ -411,7 +411,12 @@ class PokemonRepository(
         val query = CatalogQueryParser.parse(text, byArtist)
         if (!query.isSearchable) return emptyList()
         val limit = if (byArtist) ARTIST_SEARCH_LIMIT else MANUAL_SEARCH_LIMIT
-        return catalogDao.search(query.name, query.artist, query.numberKey, query.total, limit)
+        val found = catalogDao.search(query.name, query.artist, query.numberKey, query.total, limit)
+        if (found.isNotEmpty() || query.numberKey.isEmpty() || query.total == 0) return found
+        // Nessun set con quel totale esatto: si mostrano le carte con quel numero, dai set con il totale più vicino
+        return catalogDao.search(query.name, query.artist, query.numberKey, 0, 500)
+            .sortedBy { if (it.setTotal == 0) Int.MAX_VALUE else abs(it.setTotal - query.total) }
+            .take(limit)
     }
 
     /** Con un'installazione nuova non c'è nessun binder: si crea quello di partenza. */

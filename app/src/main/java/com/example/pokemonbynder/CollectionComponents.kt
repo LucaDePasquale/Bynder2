@@ -7,11 +7,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -147,6 +150,8 @@ fun WishlistTab(
 
 @Composable
 private fun WishRow(wish: WishlistCard, price: Double?, onFound: () -> Unit, onRemove: () -> Unit) {
+    val context = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(2.dp),
@@ -172,6 +177,25 @@ private fun WishRow(wish: WishlistCard, price: Double?, onFound: () -> Unit, onR
                 Row {
                     TextButton(onClick = onFound) { Text("Trovata!") }
                     TextButton(onClick = onRemove) { Text("Rimuovi") }
+                }
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Azioni sulla carta")
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Apri su Cardmarket") },
+                        onClick = {
+                            menuOpen = false
+                            openCardmarket(context, wish.name, wish.number, CardLanguage.of(wish.id))
+                        }
+                    )
+                    DropdownMenuItem(text = { Text("Trovata!") }, onClick = { menuOpen = false; onFound() })
+                    DropdownMenuItem(
+                        text = { Text("Rimuovi dalla wishlist", color = MaterialTheme.colorScheme.error) },
+                        onClick = { menuOpen = false; onRemove() }
+                    )
                 }
             }
         }
