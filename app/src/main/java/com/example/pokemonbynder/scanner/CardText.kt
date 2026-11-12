@@ -27,6 +27,13 @@ object CardText {
         return prefix + digits.trimStart('0').ifEmpty { "0" } + suffix
     }
 
+    /** Quanti caratteri giapponesi (hiragana, katakana, kanji) contiene il testo. */
+    fun japaneseCount(text: String): Int = text.count {
+        it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF || it.code in 0xFF66..0xFF9F
+    }
+
+    fun hasJapanese(text: String): Boolean = japaneseCount(text) > 0
+
     fun levenshtein(a: String, b: String): Int {
         if (a == b) return 0
         if (a.isEmpty()) return b.length

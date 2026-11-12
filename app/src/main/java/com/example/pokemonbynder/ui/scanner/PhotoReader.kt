@@ -14,6 +14,8 @@ import com.example.pokemonbynder.scanner.ScanReading
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -125,23 +127,37 @@ object PhotoReader {
         return listOf(full, centered, textArea).distinct()
     }
 
+    /** Legge il testo con il riconoscitore latino e con quello giapponese e unisce le righe. */
     private suspend fun recognize(bitmap: Bitmap): List<OcrLine> {
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val japanese = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
         try {
-            val text = suspendCancellableCoroutine<Text> { continuation ->
-                recognizer.process(InputImage.fromBitmap(bitmap, 0))
-                    .addOnSuccessListener { continuation.resume(it) }
-                    .addOnFailureListener { continuation.resumeWithException(it) }
+            val first = runOcr(latin, bitmap)
+            val second = try {
+                runOcr(japanese, bitmap)
+            } catch (e: Exception) {
+                Log.e("PhotoReader", "OCR giapponese non riuscito", e)
+                emptyList()
             }
-            return text.textBlocks
-                .flatMap { it.lines }
-                .mapNotNull { line ->
-                    val rect = line.boundingBox ?: return@mapNotNull null
-                    OcrLine(line.text, Box(rect.left, rect.top, rect.right, rect.bottom))
-                }
+            return first + second
         } finally {
-            recognizer.close()
+            latin.close()
+            japanese.close()
         }
+    }
+
+    private suspend fun runOcr(recognizer: TextRecognizer, bitmap: Bitmap): List<OcrLine> {
+        val text = suspendCancellableCoroutine<Text> { continuation ->
+            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                .addOnSuccessListener { continuation.resume(it) }
+                .addOnFailureListener { continuation.resumeWithException(it) }
+        }
+        return text.textBlocks
+            .flatMap { it.lines }
+            .mapNotNull { line ->
+                val rect = line.boundingBox ?: return@mapNotNull null
+                OcrLine(line.text, Box(rect.left, rect.top, rect.right, rect.bottom))
+            }
     }
 
     /** Carica la foto con una risoluzione sufficiente per l'OCR e la raddrizza secondo i dati EXIF. */

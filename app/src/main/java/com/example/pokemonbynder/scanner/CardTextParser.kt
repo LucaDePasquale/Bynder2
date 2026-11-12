@@ -32,7 +32,8 @@ data class ScanReading(
  */
 object CardTextParser {
     private const val NAME_ZONE = 0.22       // frazione alta del riquadro dove cercare il nome
-    private const val NUMBER_ZONE = 0.20     // frazione bassa del riquadro dove cercare il numero
+    private const val NAME_ZONE_WIDE = 0.34  // zona più ampia: nelle alt art il nome può stare più in basso
+    private const val NUMBER_ZONE = 0.26     // frazione bassa del riquadro dove cercare il numero
     private const val GUIDE_MARGIN = 0.08    // tolleranza attorno al riquadro
     private const val MAX_NAME_LINES = 3
 
@@ -66,12 +67,20 @@ object CardTextParser {
         val nameLimit = guide.top + (guide.height * NAME_ZONE).toInt()
         val numberStart = guide.bottom - (guide.height * NUMBER_ZONE).toInt()
 
-        val nameLines = inside
+        val wideLimit = guide.top + (guide.height * NAME_ZONE_WIDE).toInt()
+        val mainNames = inside
             .filter { it.box.centerY <= nameLimit }
             .sortedByDescending { it.box.height }
             .mapNotNull { cleanName(it.text) }
             .distinct()
             .take(MAX_NAME_LINES)
+        val extraNames = inside
+            .filter { it.box.centerY > nameLimit && it.box.centerY <= wideLimit }
+            .sortedByDescending { it.box.height }
+            .mapNotNull { cleanName(it.text) }
+            .distinct()
+            .take(2)
+        val nameLines = (mainNames + extraNames).distinct()
 
         val bottom = inside.filter { it.box.centerY >= numberStart }
         val number = findNumber(bottom, allowSpaced = true) ?: findNumber(inside)
@@ -83,7 +92,8 @@ object CardTextParser {
     internal fun cleanName(text: String): String? {
         val withoutHp = hitPoints.replace(text, " ")
         val cleaned = manySpaces.replace(keepLettersDigitsAndNameSymbols.replace(withoutHp, " "), " ").trim()
-        return if (cleaned.count { it.isLetter() } >= 3) cleaned else null
+        val enough = cleaned.count { it.isLetter() } >= 3 || CardText.japaneseCount(cleaned) >= 2
+        return if (enough) cleaned else null
     }
 
     internal fun findNumber(lines: List<OcrLine>, allowSpaced: Boolean = false): PrintedNumber? {
@@ -123,6 +133,7 @@ object CardTextParser {
 
     internal fun detectLanguage(lines: List<OcrLine>): String? {
         val text = lines.joinToString(" ") { it.text }.lowercase()
+        if (CardText.japaneseCount(text) >= 3) return "ja"
         val italian = italianMarkers.count { text.contains(it) }
         val english = englishMarkers.count { text.contains(it) }
         return when {

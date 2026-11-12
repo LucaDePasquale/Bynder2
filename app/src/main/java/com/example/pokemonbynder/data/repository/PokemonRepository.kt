@@ -62,6 +62,7 @@ class PokemonRepository(
     val prices: Flow<Map<String, Double>> = priceDao.getAll().map { list -> list.associate { it.catalogKey to it.priceEur } }
 
     private var nameIndex: List<String>? = null
+    private var jaNameIndex: List<String>? = null
 
     /**
      * Cerca la carta nella fonte scelta dall'utente prima della scansione.
@@ -89,17 +90,26 @@ class PokemonRepository(
      * 2) Altrimenti cerca i nomi più simili in tutto il catalogo.
      */
     private suspend fun findInCatalog(reading: ScanReading): ScanMatch {
-        val nameLines = reading.nameLines.map(CardText::normalizeName).filter { it.length >= 3 }
+        val nameLines = reading.nameLines.map(CardText::normalizeName).filter { it.length >= 3 || CardText.hasJapanese(it) }
+        val japanese = reading.languageHint == "ja"
 
         val pool: List<CatalogCard>
         val effectiveReading: ScanReading
         val number = reading.number
-        val byNumber = if (number != null) catalogDao.byNumberKey(number.key) else emptyList()
+        val byNumber = if (number != null) {
+            val western = catalogDao.byNumberKey(number.key)
+            val asian = catalogDao.byNumberKeyJa(number.key)
+            when {
+                japanese -> asian.ifEmpty { western }
+                number.total > 0 && western.none { it.setTotal == number.total } -> western + asian
+                else -> western
+            }
+        } else emptyList()
         if (byNumber.isNotEmpty()) {
             pool = byNumber
             effectiveReading = reading
         } else {
-            pool = cardsWithSimilarNames(nameLines)
+            pool = cardsWithSimilarNames(nameLines, japanese)
             effectiveReading = reading.copy(number = null)
         }
         if (pool.isEmpty()) return ScanMatch(emptyList(), false)
@@ -108,10 +118,14 @@ class PokemonRepository(
         return ScanMatch(ranked.take(MAX_CANDIDATES), CardMatcher.isConfident(ranked))
     }
 
-    private suspend fun cardsWithSimilarNames(nameLines: List<String>): List<CatalogCard> {
+    private suspend fun cardsWithSimilarNames(nameLines: List<String>, japanese: Boolean = false): List<CatalogCard> {
         if (nameLines.isEmpty()) return emptyList()
         val names = withContext(Dispatchers.Default) {
-            val index = nameIndex ?: catalogDao.distinctNames().also { nameIndex = it }
+            val index = if (japanese) {
+                jaNameIndex ?: catalogDao.distinctNamesJa().also { jaNameIndex = it }
+            } else {
+                nameIndex ?: catalogDao.distinctNames().also { nameIndex = it }
+            }
             nameLines.flatMap { line ->
                 index.asSequence()
                     .filter { abs(it.length - line.length) <= NAME_MAX_LENGTH_DIFF }
@@ -123,7 +137,11 @@ class PokemonRepository(
                     .toList()
             }.distinct()
         }
-        return if (names.isEmpty()) emptyList() else catalogDao.byNameNorm(names)
+        return when {
+            names.isEmpty() -> emptyList()
+            japanese -> catalogDao.byNameNormJa(names)
+            else -> catalogDao.byNameNorm(names)
+        }
     }
 
     /**
@@ -156,6 +174,37 @@ class PokemonRepository(
     suspend fun addAllToBinder(cards: List<CatalogCard>, binderId: Long, condition: CardCondition): Int {
         cards.forEach { saveCardToBinder(it, CardCategory.NORMAL, binderId, condition) }
         return cards.size
+    }
+
+    /**
+     * Copia o sposta carte in un altro binder. Restituisce (carte copiate/spostate, carte saltate).
+     * Copiando, una carta già presente nel binder di arrivo viene saltata; spostando le copie si sommano.
+     */
+    suspend fun transferCards(cards: List<PokemonCard>, targetBinderId: Long, move: Boolean): Pair<Int, Int> {
+        var done = 0
+        var skipped = 0
+        for (card in cards) {
+            if (card.binderId == targetBinderId) {
+                skipped++
+                continue
+            }
+            val newId = CardEntryId.of(targetBinderId, CardEntryId.catalogKeyOf(card.id))
+            val existing = pokemonDao.getById(newId)
+            if (existing != null) {
+                if (move) {
+                    pokemonDao.updateDetails(existing.id, existing.category, existing.quantity + card.quantity, existing.condition)
+                    pokemonDao.deleteById(card.id)
+                    done++
+                } else {
+                    skipped++
+                }
+            } else {
+                pokemonDao.insertCard(card.copy(id = newId, binderId = targetBinderId))
+                if (move) pokemonDao.deleteById(card.id)
+                done++
+            }
+        }
+        return done to skipped
     }
 
     private suspend fun addEntry(entry: PokemonCard): Int {

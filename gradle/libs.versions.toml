@@ -10,6 +10,7 @@ kotlin = "2.0.21"
 composeBom = "2024.10.01"
 camerax = "1.4.0"
 mlkitTextRecognition = "16.0.1"
+mlkitTextRecognitionJapanese = "16.0.1"
 room = "2.6.1"
 coil = "2.7.0"
 navCompose = "2.8.3"
@@ -40,6 +41,7 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 
 # ML Kit
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
+mlkit-text-recognition-japanese = { group = "com.google.mlkit", name = "text-recognition-japanese", version.ref = "mlkitTextRecognitionJapanese" }
 
 # Gson
 google-gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }

@@ -34,6 +34,7 @@ import com.example.pokemonbynder.ui.PokemonViewModel
 fun BindersOverview(
     binders: List<Binder>,
     allCards: List<PokemonCard>,
+    collection: List<PokemonCard>,
     prices: Map<String, Double>,
     onOpen: (Long?) -> Unit,
     onNew: () -> Unit
@@ -48,7 +49,7 @@ fun BindersOverview(
         item {
             BinderCard(
                 title = "Tutte le carte",
-                cards = allCards,
+                cards = collection,
                 prices = prices,
                 onClick = { onOpen(null) }
             )
@@ -132,6 +133,7 @@ fun BinderDetail(
     selectedIds: Set<String>,
     selecting: Boolean,
     binderNames: Map<Long, String>,
+    showTools: Boolean,
     onToggleSelected: (PokemonCard) -> Unit,
     onOpenCard: (PokemonCard) -> Unit,
     onEditCard: (PokemonCard) -> Unit,
@@ -154,9 +156,24 @@ fun BinderDetail(
     fun priceOf(card: PokemonCard): Double? = prices[CardEntryId.catalogKeyOf(card.id)]
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CategoryFilterBar(selected = filterCategory, onSelect = { viewModel.setFilterCategory(it) })
+        val filtersActive = filterCategory != null || filterLanguage != null || onlyDuplicates || searchQuery.isNotEmpty()
+        if (!showTools && filtersActive) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Ricerca o filtri attivi", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    viewModel.setFilterCategory(null)
+                    viewModel.setFilterLanguage(null)
+                    viewModel.setOnlyDuplicates(false)
+                    viewModel.setSearchQuery("")
+                }) { Text("Toglili") }
+            }
+        }
+        if (showTools) CategoryFilterBar(selected = filterCategory, onSelect = { viewModel.setFilterCategory(it) })
 
-        ExtraFilterBar(
+        if (showTools) ExtraFilterBar(
             languages = languages,
             selectedLanguage = filterLanguage,
             onLanguage = { viewModel.setFilterLanguage(it) },
@@ -164,7 +181,7 @@ fun BinderDetail(
             onOnlyDuplicates = { viewModel.setOnlyDuplicates(it) }
         )
 
-        OutlinedTextField(
+        if (showTools) OutlinedTextField(
             value = searchQuery,
             onValueChange = { viewModel.setSearchQuery(it) },
             placeholder = { Text("Cerca per nome, set o numero") },

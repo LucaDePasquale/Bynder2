@@ -2,6 +2,7 @@ package com.example.pokemonbynder.ui
 
 import android.os.SystemClock
 import android.util.Log
+import com.example.pokemonbynder.data.model.CardEntryId
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.pokemonbynder.data.backup.BackupException
@@ -147,7 +148,9 @@ class PokemonViewModel(
         repository.allCards,
         filters,
         _sortOrder
-    ) { allCards, f, order ->
+    ) { everyCard, f, order ->
+        // Guardando tutti i binder insieme la stessa carta compare una volta sola
+        val allCards = if (f.binderId == null) uniqueCards(everyCard) else everyCard
         val filtered = allCards.filter {
             (f.binderId == null || it.binderId == f.binderId) &&
                 (f.category == null || it.category == f.category) &&
@@ -508,6 +511,26 @@ class PokemonViewModel(
         }
     }
 
+    /** La collezione generale: una stessa carta presente in più binder conta una volta sola. */
+    val collection: StateFlow<List<PokemonCard>> = repository.allCards
+        .map { uniqueCards(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Copia o sposta le carte in un altro binder; [onResult] riceve (fatte, saltate), fatte = -1 se fallisce. */
+    fun transferCards(cards: List<PokemonCard>, targetBinderId: Long, move: Boolean, onResult: (Int, Int) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val (done, skipped) = repository.transferCards(cards, targetBinderId, move)
+                onResult(done, skipped)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Trasferimento delle carte non riuscito", e)
+                onResult(-1, 0)
+            }
+        }
+    }
+
     /** Tutte le carte di tutti i binder, senza filtri (per backup e condivisione). */
     val allCards: StateFlow<List<PokemonCard>> = repository.allCards
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -683,3 +706,11 @@ class PokemonViewModel(
         _filterCategory.value = category
     }
 }
+
+/** Toglie i doppioni tra binder: una carta per ogni carta del catalogo, con il maggior numero di copie. */
+fun uniqueCards(list: List<PokemonCard>): List<PokemonCard> =
+    list.groupBy { CardEntryId.catalogKeyOf(it.id) }.values.map { group ->
+        val first = group.first()
+        val copies = group.maxOf { it.quantity }
+        if (copies == first.quantity) first else first.copy(quantity = copies)
+    }

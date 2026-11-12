@@ -186,13 +186,18 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     var binderToRename by remember { mutableStateOf<Binder?>(null) }
     var binderToDelete by remember { mutableStateOf<Binder?>(null) }
     var binderMenuOpen by remember { mutableStateOf(false) }
+    var showBinderTools by rememberSaveable { mutableStateOf(false) }
+    var fabOpen by remember { mutableStateOf(false) }
+    var showTransfer by remember { mutableStateOf(false) }
+    var showImportFrom by remember { mutableStateOf(false) }
+    val collection by viewModel.collection.collectAsState()
 
     // Selezione multipla: si entra con un tocco lungo su una carta del binder
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var showDeleteSelected by remember { mutableStateOf(false) }
     val selection = cards.filter { it.id in selectedIds }
     val selecting = selection.isNotEmpty() && inBinderDetail
-    LaunchedEffect(selectedBinderId, screenIndex, binderOpen) { selectedIds = emptySet() }
+    LaunchedEffect(selectedBinderId, screenIndex, binderOpen) { selectedIds = emptySet(); fabOpen = false }
 
     fun toggleSelected(card: PokemonCard) {
         selectedIds = if (card.id in selectedIds) selectedIds - card.id else selectedIds + card.id
@@ -331,7 +336,12 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                             Icon(Icons.Default.Close, contentDescription = "Annulla selezione")
                         }
                     },
-                    actions = { TextButton(onClick = { showDeleteSelected = true }) { Text("Elimina") } },
+                    actions = {
+                        if (binders.size > 1) {
+                            TextButton(onClick = { showTransfer = true }) { Text("Copia/Sposta") }
+                        }
+                        TextButton(onClick = { showDeleteSelected = true }) { Text("Elimina") }
+                    },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 )
             } else {
@@ -352,20 +362,26 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                     },
                     actions = {
                         // Rinomina ed elimina riguardano il binder aperto (non "Tutte le carte")
-                        if (inBinderDetail && selectedBinder != null) {
+                        if (inBinderDetail) {
                             IconButton(onClick = { binderMenuOpen = true }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = "Azioni sul binder")
                             }
                             DropdownMenu(expanded = binderMenuOpen, onDismissRequest = { binderMenuOpen = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("Rinomina") },
-                                    onClick = { binderMenuOpen = false; binderToRename = selectedBinder }
+                                    text = { Text(if (showBinderTools) "Nascondi ricerca e filtri" else "Ricerca e filtri") },
+                                    onClick = { binderMenuOpen = false; showBinderTools = !showBinderTools }
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Elimina binder") },
-                                    enabled = binders.size > 1,
-                                    onClick = { binderMenuOpen = false; binderToDelete = selectedBinder }
-                                )
+                                if (selectedBinder != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Rinomina") },
+                                        onClick = { binderMenuOpen = false; binderToRename = selectedBinder }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Elimina binder") },
+                                        enabled = binders.size > 1,
+                                        onClick = { binderMenuOpen = false; binderToDelete = selectedBinder }
+                                    )
+                                }
                             }
                         }
                     },
@@ -403,22 +419,34 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         text = { Text("Aggiungi alla wishlist") }
                     )
                 } else if (inBinderDetail) {
-                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ExtendedFloatingActionButton(
-                            onClick = { showCatalogAdd = true },
-                            icon = { Icon(Icons.Default.Search, null) },
-                            text = { Text("Cerca nel catalogo") }
-                        )
-                        ExtendedFloatingActionButton(
-                            onClick = { photoLauncher.launch("image/*") },
-                            icon = { Icon(Icons.Default.Add, null) },
-                            text = { Text("Carta da foto") }
-                        )
-                        ExtendedFloatingActionButton(
-                            onClick = { showSourceDialog = true },
-                            icon = { Icon(Icons.Default.Add, null) },
-                            text = { Text("Scansiona carta") }
-                        )
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (fabOpen) {
+                            ExtendedFloatingActionButton(
+                                onClick = { fabOpen = false; showCatalogAdd = true },
+                                icon = { Icon(Icons.Default.Search, null) },
+                                text = { Text("Cerca nel catalogo") }
+                            )
+                            ExtendedFloatingActionButton(
+                                onClick = { fabOpen = false; showSourceDialog = true },
+                                icon = { Icon(Icons.Default.Add, null) },
+                                text = { Text("Scansiona carta") }
+                            )
+                            ExtendedFloatingActionButton(
+                                onClick = { fabOpen = false; photoLauncher.launch("image/*") },
+                                icon = { Icon(Icons.Default.Add, null) },
+                                text = { Text("Carta da foto") }
+                            )
+                            if (selectedBinder != null && binders.size > 1) {
+                                ExtendedFloatingActionButton(
+                                    onClick = { fabOpen = false; showImportFrom = true },
+                                    icon = { Icon(Icons.Default.List, null) },
+                                    text = { Text("Da un altro binder") }
+                                )
+                            }
+                        }
+                        FloatingActionButton(onClick = { fabOpen = !fabOpen }) {
+                            Icon(if (fabOpen) Icons.Default.Close else Icons.Default.Add, contentDescription = "Aggiungi carte")
+                        }
                     }
                 }
             }
@@ -427,7 +455,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
             when (screen) {
                 AppScreen.HOME -> HomePage(
-                    allCards = allCards,
+                    allCards = collection,
                     bindersCount = binders.size,
                     wishlistCount = wishlist.size,
                     prices = prices,
@@ -448,6 +476,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         selectedIds = selectedIds,
                         selecting = selecting,
                         binderNames = binderNames,
+                        showTools = showBinderTools,
                         onToggleSelected = { toggleSelected(it) },
                         onOpenCard = { previewId = it.id },
                         onEditCard = { cardToEdit = it },
@@ -457,6 +486,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                     BindersOverview(
                         binders = binders,
                         allCards = allCards,
+                        collection = collection,
                         prices = prices,
                         onOpen = { id ->
                             viewModel.selectBinder(id)
@@ -504,13 +534,13 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         exportLauncher.launch("pokemon-binder-$day.json")
                     },
                     onImport = { importLauncher.launch(arrayOf("*/*")) },
-                    onShareDuplicates = { shareOrExplain("Carte doppie", ShareText.duplicates(allCards), "Non hai carte doppie") },
+                    onShareDuplicates = { shareOrExplain("Carte doppie", ShareText.duplicates(collection), "Non hai carte doppie") },
                     onShareWishlist = { shareOrExplain("Wishlist", ShareText.wishlist(wishlist), "La wishlist è vuota") },
                     onShareCollection = { shareOrExplain("La mia collezione", ShareText.collection(allCards, binders), "La collezione è vuota") }
                 )
 
                 AppScreen.STATS -> StatsTab(
-                    cards = allCards,
+                    cards = collection,
                     prices = prices,
                     progress = priceProgress,
                     onRefreshPrices = { refreshAllPrices() }
@@ -786,6 +816,50 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
             // Riepilogo del ripristino da backup
             importResult?.let { result ->
                 ImportResultDialog(result = result, onDismiss = { importResult = null })
+            }
+
+            // Copia o sposta le carte selezionate in un altro binder
+            if (showTransfer && selecting) {
+                TransferDialog(
+                    count = selection.size,
+                    binders = binders,
+                    currentBinderId = selectedBinderId,
+                    onConfirm = { target, move ->
+                        showTransfer = false
+                        val chosen = selection
+                        viewModel.transferCards(chosen, target, move) { done, skipped ->
+                            val where = binderNames[target]?.let { " in «$it»" }.orEmpty()
+                            val verb = if (move) "spostate" else "copiate"
+                            val message = when {
+                                done < 0 -> "Operazione non riuscita"
+                                done == 0 -> "Nessuna carta $verb: erano già lì"
+                                skipped > 0 -> "$done carte $verb$where ($skipped già presenti)"
+                                else -> "$done carte $verb$where"
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        }
+                        selectedIds = emptySet()
+                    },
+                    onDismiss = { showTransfer = false }
+                )
+            }
+
+            // Aggiunta di carte prese da un altro binder
+            val importTarget = selectedBinder
+            if (showImportFrom && importTarget != null) {
+                ImportFromBinderDialog(
+                    binders = binders,
+                    targetBinder = importTarget,
+                    allCards = allCards,
+                    onConfirm = { chosen ->
+                        showImportFrom = false
+                        viewModel.transferCards(chosen, importTarget.id, false) { done, _ ->
+                            val message = if (done < 0) "Operazione non riuscita" else "$done carte aggiunte a «${importTarget.name}»"
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onDismiss = { showImportFrom = false }
+                )
             }
 
             // Eliminazione delle carte selezionate

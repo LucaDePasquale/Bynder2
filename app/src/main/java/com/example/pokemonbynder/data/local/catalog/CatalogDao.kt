@@ -18,6 +18,15 @@ interface CatalogDao {
     @Query("SELECT * FROM catalog_cards WHERE numberKey = :key AND lang != 'ja'")
     suspend fun byNumberKey(key: String): List<CatalogCard>
 
+    @Query("SELECT * FROM catalog_cards WHERE numberKey = :key AND lang = 'ja'")
+    suspend fun byNumberKeyJa(key: String): List<CatalogCard>
+
+    @Query("SELECT * FROM catalog_cards WHERE nameNorm IN (:names) AND lang = 'ja'")
+    suspend fun byNameNormJa(names: List<String>): List<CatalogCard>
+
+    @Query("SELECT DISTINCT nameNorm FROM catalog_cards WHERE lang = 'ja'")
+    suspend fun distinctNamesJa(): List<String>
+
     @Query("SELECT * FROM catalog_cards WHERE nameNorm IN (:names) AND lang != 'ja'")
     suspend fun byNameNorm(names: List<String>): List<CatalogCard>
 
