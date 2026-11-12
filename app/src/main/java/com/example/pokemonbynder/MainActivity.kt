@@ -145,8 +145,11 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     val selectedBinderId by viewModel.selectedBinderId.collectAsState()
     val cardCounts by viewModel.cardCounts.collectAsState()
     val wishlist by viewModel.wishlist.collectAsState()
-    val prices by viewModel.prices.collectAsState()
+    val fetchedPrices by viewModel.prices.collectAsState()
     val trackingApp = LocalContext.current.applicationContext as PokemonApplication
+    val manualPrices by trackingApp.manualPrices.prices.collectAsState()
+    // I prezzi scritti a mano valgono più di quelli presi da internet, in tutta l'app
+    val prices = remember(fetchedPrices, manualPrices) { fetchedPrices + manualPrices }
     val priceHistory by trackingApp.priceHistory.points.collectAsState()
     val wishTargets by trackingApp.wishTargets.targets.collectAsState()
     val priceProgress by viewModel.priceProgress.collectAsState()
@@ -700,9 +703,13 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
 
             // Dialog per cambiare tipologia, copie, condizione e/o binder di una carta già salvata
             cardToEdit?.let { card ->
+                val priceKey = CardEntryId.catalogKeyOf(card.id)
                 EditCardDialog(
                     card = card,
                     binders = binders,
+                    onlinePrice = fetchedPrices[priceKey],
+                    manualPrice = manualPrices[priceKey],
+                    onSetManualPrice = { trackingApp.manualPrices.set(priceKey, it) },
                     onConfirm = { category, binderId, quantity, condition, language ->
                         viewModel.updateCard(card, category, binderId, quantity, condition, language) { success, languageMissing ->
                             if (!success) {
@@ -1060,8 +1067,14 @@ fun EditCardDialog(
     onConfirm: (CardCategory, Long, Int, CardCondition, String) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
-    onEditDetails: (() -> Unit)? = null
+    onEditDetails: (() -> Unit)? = null,
+    onlinePrice: Double? = null,
+    manualPrice: Double? = null,
+    onSetManualPrice: (Double?) -> Unit = {}
 ) {
+    var priceText by remember(card.id) {
+        mutableStateOf(manualPrice?.let { String.format(java.util.Locale.US, "%.2f", it) }.orEmpty())
+    }
     var selectedCategory by remember(card.id) { mutableStateOf(card.category) }
     var selectedBinderId by remember(card.id) { mutableStateOf(card.binderId) }
     var quantity by remember(card.id) { mutableStateOf(card.quantity) }
@@ -1093,6 +1106,22 @@ fun EditCardDialog(
                 QuantityStepper(quantity = quantity, onChange = { quantity = it })
                 Spacer(modifier = Modifier.height(4.dp))
                 ConditionPicker(selected = condition, onSelect = { condition = it })
+
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it.filter { c -> c.isDigit() || c == '.' || c == ',' }.take(8) },
+                    label = { Text("Prezzo a mano (€ a copia)") },
+                    supportingText = {
+                        Text(
+                            if (onlinePrice != null) "Prezzo trovato online: ${formatPrice(onlinePrice)}. Lascia vuoto per usarlo."
+                            else "Nessun prezzo online: scrivilo tu, oppure lascia vuoto."
+                        )
+                    },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Lingua della carta:")
@@ -1130,7 +1159,12 @@ fun EditCardDialog(
                 ) { Text("Elimina carta") }
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(selectedCategory, selectedBinderId, quantity, condition, language) }) { Text("Salva") } },
+        confirmButton = {
+            Button(onClick = {
+                onSetManualPrice(priceText.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 })
+                onConfirm(selectedCategory, selectedBinderId, quantity, condition, language)
+            }) { Text("Salva") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }

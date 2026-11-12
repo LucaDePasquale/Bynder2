@@ -163,3 +163,25 @@ fun WishTargetDialog(
         }
     )
 }
+
+/** Prezzi scritti a mano (a copia): hanno la precedenza su quelli presi da internet. */
+class ManualPriceStore(context: Context) {
+    private val prefs = context.applicationContext.getSharedPreferences("manual_prices", Context.MODE_PRIVATE)
+    private val _prices = MutableStateFlow(load())
+    val prices: StateFlow<Map<String, Double>> = _prices.asStateFlow()
+
+    private fun load(): Map<String, Double> =
+        prefs.all.mapNotNull { (key, value) ->
+            val price = (value as? String)?.toDoubleOrNull()
+            if (price != null) key to price else null
+        }.toMap()
+
+    /** [price] null torna al prezzo di internet. */
+    @Synchronized
+    fun set(key: String, price: Double?) {
+        val updated = _prices.value.toMutableMap()
+        if (price == null) updated.remove(key) else updated[key] = price
+        _prices.value = updated
+        prefs.edit().apply { if (price == null) remove(key) else putString(key, price.toString()) }.apply()
+    }
+}
