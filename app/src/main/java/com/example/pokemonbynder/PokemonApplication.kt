@@ -25,6 +25,8 @@ class PokemonApplication : Application() {
     lateinit var repository: PokemonRepository
     lateinit var backupManager: BackupManager
     lateinit var settings: SettingsStore
+    lateinit var priceHistory: PriceHistoryStore
+    lateinit var wishTargets: WishTargetStore
     lateinit var imageResolver: ImageResolver
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -49,6 +51,8 @@ class PokemonApplication : Application() {
 
         backupManager = BackupManager(database)
         settings = SettingsStore(this)
+        priceHistory = PriceHistoryStore(this)
+        wishTargets = WishTargetStore(this)
 
         catalogDatabase = Room.databaseBuilder(
             this,
@@ -73,6 +77,11 @@ class PokemonApplication : Application() {
                 repository.ensureDefaultBinder()
             } catch (e: Exception) {
                 Log.e("PokemonApplication", "Creazione del binder di partenza non riuscita", e)
+            }
+            try {
+                repository.redetectCategories()
+            } catch (e: Exception) {
+                Log.e("PokemonApplication", "Aggiornamento delle tipologie non riuscito", e)
             }
         }
 

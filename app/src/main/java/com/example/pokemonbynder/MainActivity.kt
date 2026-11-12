@@ -146,6 +146,9 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     val cardCounts by viewModel.cardCounts.collectAsState()
     val wishlist by viewModel.wishlist.collectAsState()
     val prices by viewModel.prices.collectAsState()
+    val trackingApp = LocalContext.current.applicationContext as PokemonApplication
+    val priceHistory by trackingApp.priceHistory.points.collectAsState()
+    val wishTargets by trackingApp.wishTargets.targets.collectAsState()
     val priceProgress by viewModel.priceProgress.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val candidates by viewModel.candidates.collectAsState()
@@ -173,6 +176,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
 
     // Finestre e dialoghi
     var cardToEdit by remember { mutableStateOf<PokemonCard?>(null) }
+    var detailsCard by remember { mutableStateOf<PokemonCard?>(null) }
     var previewId by remember { mutableStateOf<String?>(null) }
     var cardToDelete by remember { mutableStateOf<PokemonCard?>(null) }
     var showSourceDialog by remember { mutableStateOf(false) }
@@ -191,6 +195,14 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     var showTransfer by remember { mutableStateOf(false) }
     var showImportFrom by remember { mutableStateOf(false) }
     val collection by viewModel.collection.collectAsState()
+    // Registra il valore della collezione quando i prezzi si sono assestati (al massimo un punto al giorno)
+    val collectionValue = collection.sumOf { (prices[CardEntryId.catalogKeyOf(it.id)] ?: 0.0) * it.quantity }
+    LaunchedEffect(collectionValue) {
+        if (collectionValue > 0.0) {
+            delay(3000)
+            trackingApp.priceHistory.record(collectionValue)
+        }
+    }
 
     // Selezione multipla: si entra con un tocco lungo su una carta del binder
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
@@ -521,7 +533,9 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         viewModel.refreshWishlistPrices(wishlist) { found, checked ->
                             Toast.makeText(context, priceResultMessage(found, checked), Toast.LENGTH_LONG).show()
                         }
-                    }
+                    },
+                    targets = wishTargets,
+                    onSetTarget = { wish, price -> trackingApp.wishTargets.set(wish.id, price) }
                 )
 
                 AppScreen.SETTINGS -> SettingsPage(
@@ -543,7 +557,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                     cards = collection,
                     prices = prices,
                     progress = priceProgress,
-                    onRefreshPrices = { refreshAllPrices() }
+                    onRefreshPrices = { refreshAllPrices() },
+                    history = priceHistory
                 )
             }
 
@@ -711,7 +726,22 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         }
                         cardToEdit = null
                     },
-                    onDismiss = { cardToEdit = null }
+                    onDismiss = { cardToEdit = null },
+                    onEditDetails = if (isCustomCard(card)) ({ cardToEdit = null; detailsCard = card }) else null
+                )
+            }
+
+            // Modifica di nome, set, numero, autore e rarità di una carta creata da foto
+            detailsCard?.let { card ->
+                CustomCardDetailsDialog(
+                    card = card,
+                    onSave = { name, set, number, artist, rarity ->
+                        detailsCard = null
+                        viewModel.updateCustomCardInfo(card, name, set, number, artist, rarity) { ok ->
+                            Toast.makeText(context, if (ok) "Carta aggiornata" else "Errore nel salvataggio", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onDismiss = { detailsCard = null }
                 )
             }
 
@@ -1006,10 +1036,6 @@ fun CandidateSelectionDialog(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Text("Scegli la tipologia della carta fisica:")
-                Spacer(modifier = Modifier.height(8.dp))
-                CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
-                Spacer(modifier = Modifier.height(8.dp))
                 ConditionPicker(selected = selectedCondition, onSelect = { selectedCondition = it })
 
                 if (binders.size > 1) {
@@ -1033,7 +1059,8 @@ fun EditCardDialog(
     binders: List<Binder>,
     onConfirm: (CardCategory, Long, Int, CardCondition, String) -> Unit,
     onDelete: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onEditDetails: (() -> Unit)? = null
 ) {
     var selectedCategory by remember(card.id) { mutableStateOf(card.category) }
     var selectedBinderId by remember(card.id) { mutableStateOf(card.binderId) }
@@ -1062,11 +1089,6 @@ fun EditCardDialog(
                     "${card.set} · ${card.number} · ${CardLanguage.label(CardLanguage.of(card.id))}",
                     style = MaterialTheme.typography.bodySmall
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Tipologia:")
-                Spacer(modifier = Modifier.height(4.dp))
-                CategoryPicker(selected = selectedCategory, onSelect = { selectedCategory = it })
-
                 Spacer(modifier = Modifier.height(12.dp))
                 QuantityStepper(quantity = quantity, onChange = { quantity = it })
                 Spacer(modifier = Modifier.height(4.dp))
@@ -1097,6 +1119,10 @@ fun EditCardDialog(
                     BinderPicker(binders = binders, selectedId = selectedBinderId, onSelect = { selectedBinderId = it })
                 }
 
+                if (onEditDetails != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = onEditDetails) { Text("Modifica nome, set, numero…") }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 TextButton(
                     onClick = { confirmDelete = true },

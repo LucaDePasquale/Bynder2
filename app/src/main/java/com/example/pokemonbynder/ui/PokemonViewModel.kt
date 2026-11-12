@@ -516,6 +516,23 @@ class PokemonViewModel(
         .map { uniqueCards(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    fun updateCustomCardInfo(
+        card: PokemonCard, name: String, set: String, number: String, artist: String?, rarity: String?,
+        onResult: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.updateCustomCardInfo(card, name, set, number, artist, rarity)
+                onResult(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Modifica dei dati della carta non riuscita", e)
+                onResult(false)
+            }
+        }
+    }
+
     /** Copia o sposta le carte in un altro binder; [onResult] riceve (fatte, saltate), fatte = -1 se fallisce. */
     fun transferCards(cards: List<PokemonCard>, targetBinderId: Long, move: Boolean, onResult: (Int, Int) -> Unit) {
         viewModelScope.launch {

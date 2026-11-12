@@ -113,9 +113,25 @@ fun WishlistTab(
     progress: Pair<Int, Int>?,
     onFound: (WishlistCard) -> Unit,
     onRemove: (WishlistCard) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    targets: Map<String, Double> = emptyMap(),
+    onSetTarget: (WishlistCard, Double?) -> Unit = { _, _ -> }
 ) {
     val total = wishlist.sumOf { prices[it.id] ?: 0.0 }
+    val belowTarget = wishlist.count { wish ->
+        val price = prices[wish.id]
+        val target = targets[wish.id]
+        price != null && target != null && price <= target
+    }
+    var targetFor by remember { mutableStateOf<WishlistCard?>(null) }
+    targetFor?.let { wish ->
+        WishTargetDialog(
+            cardName = wish.name,
+            current = targets[wish.id],
+            onSave = { onSetTarget(wish, it); targetFor = null },
+            onDismiss = { targetFor = null }
+        )
+    }
     val withoutPrice = wishlist.count { prices[it.id] == null }
     var preview by remember { mutableStateOf<WishlistCard?>(null) }
     preview?.let { wish ->
@@ -134,6 +150,16 @@ fun WishlistTab(
             enabled = wishlist.isNotEmpty(),
             onRefresh = onRefresh
         )
+        if (belowTarget > 0) {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    if (belowTarget == 1) "1 carta è sotto il tuo prezzo obiettivo!" else "$belowTarget carte sono sotto il tuo prezzo obiettivo!",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
         if (wishlist.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(
@@ -150,7 +176,7 @@ fun WishlistTab(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(wishlist, key = { it.id }) { wish ->
-                    WishRow(wish = wish, price = prices[wish.id], onOpen = { preview = wish }, onFound = { onFound(wish) }, onRemove = { onRemove(wish) })
+                    WishRow(wish = wish, price = prices[wish.id], target = targets[wish.id], onOpen = { preview = wish }, onTarget = { targetFor = wish }, onFound = { onFound(wish) }, onRemove = { onRemove(wish) })
                 }
             }
         }
@@ -158,7 +184,7 @@ fun WishlistTab(
 }
 
 @Composable
-private fun WishRow(wish: WishlistCard, price: Double?, onOpen: () -> Unit, onFound: () -> Unit, onRemove: () -> Unit) {
+private fun WishRow(wish: WishlistCard, price: Double?, target: Double?, onOpen: () -> Unit, onTarget: () -> Unit, onFound: () -> Unit, onRemove: () -> Unit) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
     Card(
@@ -183,6 +209,15 @@ private fun WishRow(wish: WishlistCard, price: Double?, onOpen: () -> Unit, onFo
                     overflow = TextOverflow.Ellipsis
                 )
                 if (price != null) Text(formatPrice(price), style = MaterialTheme.typography.bodySmall)
+                if (target != null) {
+                    val reached = price != null && price <= target
+                    Text(
+                        if (reached) "Sotto il tuo obiettivo (${formatPrice(target)})" else "Obiettivo ${formatPrice(target)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = if (reached) FontWeight.Bold else FontWeight.Normal,
+                        color = if (reached) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Row {
                     TextButton(onClick = onFound) { Text("Trovata!") }
                     TextButton(onClick = onRemove) { Text("Rimuovi") }
@@ -199,6 +234,10 @@ private fun WishRow(wish: WishlistCard, price: Double?, onOpen: () -> Unit, onFo
                             menuOpen = false
                             openCardmarket(context, wish.name, wish.number, CardLanguage.of(wish.id))
                         }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (target == null) "Imposta prezzo obiettivo" else "Cambia prezzo obiettivo") },
+                        onClick = { menuOpen = false; onTarget() }
                     )
                     DropdownMenuItem(text = { Text("Trovata!") }, onClick = { menuOpen = false; onFound() })
                     DropdownMenuItem(
@@ -287,10 +326,6 @@ fun WishlistFoundDialog(
                 Text(wish.name, fontWeight = FontWeight.Bold)
                 Text("${wish.set} · ${wish.number}", style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Tipologia:")
-                Spacer(modifier = Modifier.height(4.dp))
-                CategoryPicker(selected = category, onSelect = { category = it })
-                Spacer(modifier = Modifier.height(8.dp))
                 ConditionPicker(selected = condition, onSelect = { condition = it })
                 if (binders.size > 1) {
                     Spacer(modifier = Modifier.height(12.dp))

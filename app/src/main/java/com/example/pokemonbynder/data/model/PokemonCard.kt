@@ -39,7 +39,31 @@ enum class CardCategory(val label: String) {
     REVERSE("Reverse"),
     AR("AR"),
     SAR("SAR"),
-    OTHER("Altro")
+    OTHER("Altro");
+
+    companion object {
+        /**
+         * Ricava la tipologia dal nome e dalla rarità della carta (non si sceglie più a mano).
+         * Non può riconoscere le Reverse: nel catalogo sono la stessa carta della versione normale.
+         */
+        fun detect(name: String, rarity: String?): CardCategory {
+            val upper = name.trim().uppercase()
+            val r = (rarity ?: "").lowercase()
+            return when {
+                upper.contains("V-ASTRO") || upper.contains("VASTRO") || upper.endsWith(" V ASTRO") -> V_ASTRO
+                upper.endsWith(" VMAX") || upper.contains(" VMAX ") -> VMAX
+                upper.contains("&") && upper.contains("GX") -> TAG_TEAM
+                upper.endsWith(" EX") || upper.endsWith("-EX") || upper.contains(" EX ") -> EX
+                upper.endsWith(" V") || upper.contains("V-UNION") -> V
+                upper.contains("LEGEND") || upper.contains("LEGGEND") -> LEGGENDE
+                r.contains("special illustration") || r.contains("illustrazione speciale") || r.contains("sar") -> SAR
+                r.contains("illustration") || r.contains("illustrazione") -> AR
+                r.contains("full art") || r.contains("ultra") -> FULL_ART
+                r.contains("holo") -> HOLO
+                else -> NORMAL
+            }
+        }
+    }
 }
 
 /**

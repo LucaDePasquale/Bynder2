@@ -164,7 +164,7 @@ class PokemonRepository(
             rarity = card.rarity,
             imageUrl = card.imageUrl,
             set = card.setName,
-            category = category,
+            category = if (category == CardCategory.NORMAL) CardCategory.detect(card.name, card.rarity) else category,
             binderId = binderId,
             condition = condition
         )
@@ -384,7 +384,7 @@ class PokemonRepository(
             rarity = wish.rarity,
             imageUrl = wish.imageUrl,
             set = wish.set,
-            category = category,
+            category = if (category == CardCategory.NORMAL) CardCategory.detect(wish.name, wish.rarity) else category,
             binderId = binderId,
             condition = condition
         )
@@ -437,6 +437,20 @@ class PokemonRepository(
     suspend fun deleteBinder(id: Long) {
         pokemonDao.deleteCardsInBinder(id)
         binderDao.delete(id)
+    }
+
+    /** Dà la tipologia (EX, V, Holo...) alle carte rimaste "Normale" che in realtà lo sono di meno. */
+    suspend fun redetectCategories() {
+        for (card in pokemonDao.normalCards()) {
+            val detected = CardCategory.detect(card.name, card.rarity)
+            if (detected != CardCategory.NORMAL) pokemonDao.updateCategory(card.id, detected)
+        }
+    }
+
+    /** Modifica nome, set, numero, autore e rarità di una carta creata da foto. */
+    suspend fun updateCustomCardInfo(card: PokemonCard, name: String, set: String, number: String, artist: String?, rarity: String?) {
+        val key = CardEntryId.catalogKeyOf(card.id)
+        pokemonDao.updateInfoByKey(key, name, set, number, artist, rarity, CardCategory.detect(name, rarity))
     }
 
     /** Tutti i set del catalogo offline. */

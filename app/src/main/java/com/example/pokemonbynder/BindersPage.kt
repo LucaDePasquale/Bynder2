@@ -173,7 +173,6 @@ fun BinderDetail(
                 }) { Text("Toglili") }
             }
         }
-        if (showTools) CategoryFilterBar(selected = filterCategory, onSelect = { viewModel.setFilterCategory(it) })
 
         if (showTools) ExtraFilterBar(
             languages = languages,

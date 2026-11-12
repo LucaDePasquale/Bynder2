@@ -305,7 +305,8 @@ fun StatsTab(
     cards: List<PokemonCard>,
     prices: Map<String, Double>,
     progress: Pair<Int, Int>?,
-    onRefreshPrices: () -> Unit
+    onRefreshPrices: () -> Unit,
+    history: List<PricePoint> = emptyList()
 ) {
     val stats = remember(cards, prices) { CollectionStatsCalculator.compute(cards, prices) }
 
@@ -328,6 +329,8 @@ fun StatsTab(
             enabled = true,
             onRefresh = onRefreshPrices
         )
+
+        PriceHistoryChart(points = history)
 
         StatsSection("Per tipologia", stats.byCategory)
         StatsSection("Per set (primi 10)", stats.bySet)

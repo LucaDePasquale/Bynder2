@@ -55,7 +55,6 @@ fun CustomCardDialog(
     var artist by remember(draft) { mutableStateOf(draft.artist) }
     var rarity by remember(draft) { mutableStateOf("") }
     var lang by remember(draft) { mutableStateOf(if (draft.lang == "en") "en" else "it") }
-    var category by remember(draft) { mutableStateOf(CardCategory.NORMAL) }
     var condition by remember(draft) { mutableStateOf(defaultCondition) }
     var binderId by remember(draft) { mutableStateOf(defaultBinderId) }
 
@@ -122,10 +121,6 @@ fun CustomCardDialog(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Tipologia:")
-                Spacer(modifier = Modifier.height(4.dp))
-                CategoryPicker(selected = category, onSelect = { category = it })
-                Spacer(modifier = Modifier.height(8.dp))
                 ConditionPicker(selected = condition, onSelect = { condition = it })
                 if (binders.size > 1) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -148,13 +143,79 @@ fun CustomCardDialog(
                             artist = artist.trim(),
                             rarity = rarity.trim(),
                             lang = lang,
-                            category = category,
+                            category = CardCategory.detect(name.trim(), rarity.trim()),
                             binderId = binderId,
                             condition = condition
                         )
                     )
                 }
             ) { Text("Crea e aggiungi") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
+    )
+}
+
+/** Una carta è "creata da foto" se il suo set è uno dei set personali (custom-...). */
+fun isCustomCard(card: com.example.pokemonbynder.data.model.PokemonCard): Boolean =
+    com.example.pokemonbynder.data.model.CardEntryId.catalogKeyOf(card.id).substringAfter(':', "").startsWith("custom-")
+
+/** Modifica nome, set, numero, autore e rarità di una carta creata da foto. */
+@Composable
+fun CustomCardDetailsDialog(
+    card: com.example.pokemonbynder.data.model.PokemonCard,
+    onSave: (name: String, set: String, number: String, artist: String?, rarity: String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember(card.id) { mutableStateOf(card.name) }
+    var setName by remember(card.id) { mutableStateOf(card.set) }
+    var number by remember(card.id) { mutableStateOf(card.number) }
+    var artist by remember(card.id) { mutableStateOf(card.artist.orEmpty()) }
+    var rarity by remember(card.id) { mutableStateOf(card.rarity.orEmpty()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dati della carta") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("Nome *") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = setName, onValueChange = { setName = it },
+                    label = { Text("Set") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = number, onValueChange = { number = it },
+                    label = { Text("Numero") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = artist, onValueChange = { artist = it },
+                    label = { Text("Autore (illustratore)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = rarity, onValueChange = { rarity = it },
+                    label = { Text("Rarità") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onSave(
+                        name.trim(),
+                        setName.trim().ifEmpty { card.set },
+                        number.trim().ifEmpty { card.number },
+                        artist.trim().ifEmpty { null },
+                        rarity.trim().ifEmpty { null }
+                    )
+                }
+            ) { Text("Salva") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )

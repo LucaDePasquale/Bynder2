@@ -254,7 +254,7 @@ fun CardPreviewDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 Column(modifier = Modifier.fillMaxWidth()) {
                     DetailRow("Lingua", CardLanguage.label(CardLanguage.of(card.id)))
-                    DetailRow("Tipologia", card.category.label)
+                    DetailRow("Tipo", card.category.label)
                     DetailRow("Condizione", card.condition.label)
                     DetailRow("Copie", "${card.quantity}")
                     card.rarity?.takeIf { it.isNotBlank() }?.let { DetailRow("Rarità", it) }

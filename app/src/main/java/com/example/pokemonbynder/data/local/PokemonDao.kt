@@ -18,6 +18,9 @@ interface PokemonDao {
     @Query("SELECT * FROM pokemon_cards WHERE category = :category")
     fun getCardsByCategory(category: CardCategory): Flow<List<PokemonCard>>
 
+    @Query("SELECT * FROM pokemon_cards WHERE category = 'NORMAL'")
+    suspend fun normalCards(): List<PokemonCard>
+
     @Query("SELECT * FROM pokemon_cards WHERE id = :id")
     suspend fun getById(id: String): PokemonCard?
 
@@ -30,6 +33,13 @@ interface PokemonDao {
     /** Aggiorna l'immagine della carta in tutti i binder (l'id negli altri binder è "binder|chiave"). */
     @Query("UPDATE pokemon_cards SET imageUrl = :imageUrl WHERE id = :key OR id LIKE '%|' || :key")
     suspend fun updateImageByKey(key: String, imageUrl: String)
+
+    /** Cambia i dati di una carta creata dall'utente in tutti i binder dove si trova. */
+    @Query(
+        "UPDATE pokemon_cards SET name = :name, `set` = :set, number = :number, artist = :artist, rarity = :rarity, category = :category " +
+            "WHERE id = :key OR id LIKE '%|' || :key"
+    )
+    suspend fun updateInfoByKey(key: String, name: String, set: String, number: String, artist: String?, rarity: String?, category: CardCategory)
 
     @Query("UPDATE pokemon_cards SET imageUrl = :imageUrl WHERE id = :id")
     suspend fun updateImage(id: String, imageUrl: String)
