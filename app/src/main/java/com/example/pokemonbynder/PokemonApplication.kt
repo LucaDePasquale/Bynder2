@@ -28,6 +28,8 @@ class PokemonApplication : Application() {
     lateinit var priceHistory: PriceHistoryStore
     lateinit var wishTargets: WishTargetStore
     lateinit var manualPrices: ManualPriceStore
+    lateinit var manualOrders: ManualOrderStore
+    lateinit var pokedex: PokedexIndex
     lateinit var imageResolver: ImageResolver
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -55,6 +57,8 @@ class PokemonApplication : Application() {
         priceHistory = PriceHistoryStore(this)
         wishTargets = WishTargetStore(this)
         manualPrices = ManualPriceStore(this)
+        manualOrders = ManualOrderStore(this)
+        pokedex = PokedexIndex(this)
 
         catalogDatabase = Room.databaseBuilder(
             this,

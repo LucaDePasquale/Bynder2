@@ -2,6 +2,10 @@ package com.example.pokemonbynder.ui
 
 import android.os.SystemClock
 import android.util.Log
+import com.example.pokemonbynder.ManualOrderStore
+import com.example.pokemonbynder.PokedexIndex
+import com.example.pokemonbynder.rarityRank
+import com.example.pokemonbynder.sortManual
 import com.example.pokemonbynder.data.model.CardEntryId
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -34,13 +38,18 @@ enum class SortOrder(val label: String) {
     RECENT("Più recenti"),
     NAME("Nome"),
     SET("Set"),
-    NUMBER("Numero")
+    NUMBER("Numero"),
+    DEX("Pokédex"),
+    RARITY("Rarità"),
+    MANUAL("Mio ordine")
 }
 
 class PokemonViewModel(
     private val repository: PokemonRepository,
     catalogReady: StateFlow<Boolean>,
-    private val backupManager: BackupManager
+    private val backupManager: BackupManager,
+    private val pokedex: PokedexIndex,
+    private val manualOrderStore: ManualOrderStore
 ) : ViewModel() {
 
     companion object {
@@ -147,8 +156,9 @@ class PokemonViewModel(
     val cards: StateFlow<List<PokemonCard>> = combine(
         repository.allCards,
         filters,
-        _sortOrder
-    ) { everyCard, f, order ->
+        _sortOrder,
+        manualOrderStore.orders
+    ) { everyCard, f, order, manualOrders ->
         // Guardando tutti i binder insieme la stessa carta compare una volta sola
         val allCards = if (f.binderId == null) uniqueCards(everyCard) else everyCard
         val filtered = allCards.filter {
@@ -164,6 +174,11 @@ class PokemonViewModel(
             SortOrder.NAME -> filtered.sortedWith(compareBy({ it.name.lowercase() }, { it.set }))
             SortOrder.SET -> filtered.sortedWith(compareBy({ it.set.lowercase() }, { numberOrder(it.number) }, { it.number }))
             SortOrder.NUMBER -> filtered.sortedWith(compareBy({ numberOrder(it.number) }, { it.number }, { it.name.lowercase() }))
+            SortOrder.DEX -> filtered.sortedWith(compareBy({ pokedex.dexOf(it.name) }, { it.name.lowercase() }, { it.set.lowercase() }))
+            // Prima le più rare; a parità, per nome
+            SortOrder.RARITY -> filtered.sortedWith(compareByDescending<PokemonCard> { rarityRank(it.rarity) }.thenBy { it.name.lowercase() })
+            // L'ordine a mano esiste solo dentro un binder; tra tutte le carte si usano le più recenti
+            SortOrder.MANUAL -> if (f.binderId == null) filtered.asReversed() else sortManual(filtered, manualOrders[f.binderId])
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -531,6 +546,12 @@ class PokemonViewModel(
                 onResult(false)
             }
         }
+    }
+
+    val manualOrders: StateFlow<Map<Long, List<String>>> = manualOrderStore.orders
+
+    fun saveManualOrder(binderId: Long, ids: List<String>) {
+        manualOrderStore.set(binderId, ids)
     }
 
     /** Imposta a mano la foto di una carta (in tutti i binder e nella wishlist). */

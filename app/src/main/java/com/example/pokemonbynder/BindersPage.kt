@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import com.example.pokemonbynder.ui.SortOrder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -134,6 +135,7 @@ fun BinderDetail(
     selectedIds: Set<String>,
     selecting: Boolean,
     binderNames: Map<Long, String>,
+    prices: Map<String, Double>,
     showTools: Boolean,
     onToggleSelected: (PokemonCard) -> Unit,
     onOpenCard: (PokemonCard) -> Unit,
@@ -150,7 +152,8 @@ fun BinderDetail(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
     val cardCounts by viewModel.cardCounts.collectAsState()
-    val prices by viewModel.prices.collectAsState()
+    val manualOrders by viewModel.manualOrders.collectAsState()
+    var showReorder by remember { mutableStateOf(false) }
     val priceProgress by viewModel.priceProgress.collectAsState()
     var pageView by rememberSaveable { mutableStateOf(false) }
     val languages = remember(allCards) { allCards.map { CardLanguage.of(it.id) }.distinct().sorted() }
@@ -206,8 +209,19 @@ fun BinderDetail(
             listView = listView,
             onToggleView = onToggleView,
             pageView = pageView,
-            onTogglePages = { pageView = !pageView }
+            onTogglePages = { pageView = !pageView },
+            onReorder = if (sortOrder == SortOrder.MANUAL && selectedBinderId != null) ({ showReorder = true }) else null
         )
+
+        val reorderBinderId = selectedBinderId
+        if (showReorder && reorderBinderId != null) {
+            ReorderDialog(
+                binderName = binderNames[reorderBinderId] ?: "binder",
+                cards = sortManual(allCards.filter { it.binderId == reorderBinderId }, manualOrders[reorderBinderId]),
+                onOrder = { ids -> viewModel.saveManualOrder(reorderBinderId, ids) },
+                onDismiss = { showReorder = false }
+            )
+        }
 
         ValueBar(
             text = valueText(

@@ -110,7 +110,7 @@ class MainActivity : ComponentActivity() {
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                            return PokemonViewModel(repository, catalogReady, app.backupManager) as T
+                            return PokemonViewModel(repository, catalogReady, app.backupManager, app.pokedex, app.manualOrders) as T
                         }
                     }
                 )
@@ -508,6 +508,7 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         selectedIds = selectedIds,
                         selecting = selecting,
                         binderNames = binderNames,
+                        prices = prices,
                         showTools = showBinderTools,
                         onToggleSelected = { toggleSelected(it) },
                         onOpenCard = { previewId = it.id },
@@ -1203,7 +1204,8 @@ fun SortAndViewBar(
     listView: Boolean,
     onToggleView: () -> Unit,
     pageView: Boolean = false,
-    onTogglePages: (() -> Unit)? = null
+    onTogglePages: (() -> Unit)? = null,
+    onReorder: (() -> Unit)? = null
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -1229,6 +1231,7 @@ fun SortAndViewBar(
                 }
             }
         }
+        if (onReorder != null) TextButton(onClick = onReorder) { Text("Riordina") }
         if (!pageView) TextButton(onClick = onToggleView) { Text(if (listView) "Griglia" else "Lista") }
         if (onTogglePages != null) TextButton(onClick = onTogglePages) { Text(if (pageView) "Normale" else "Binder") }
     }
