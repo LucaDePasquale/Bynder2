@@ -3,7 +3,14 @@ package com.example.pokemonbynder
 import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
@@ -71,7 +78,10 @@ fun rarityRank(rarity: String?): Int {
     }
 }
 
-/** Schermata per mettere le carte di un binder nell'ordine che si vuole. Ogni spostamento si salva subito. */
+/**
+ * Schermata per mettere le carte di un binder nell'ordine che si vuole: si trascina la carta dalle tre
+ * righe ☰ (oppure ⋮ per portarla in cima, in fondo o in una posizione precisa). Ogni spostamento si salva.
+ */
 @Composable
 fun ReorderDialog(
     binderName: String,
@@ -81,6 +91,10 @@ fun ReorderDialog(
 ) {
     var items by remember { mutableStateOf(cards) }
     var positionFor by remember { mutableStateOf<PokemonCard?>(null) }
+    var draggedId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     fun move(card: PokemonCard, to: Int) {
         val list = items.toMutableList()
@@ -90,6 +104,32 @@ fun ReorderDialog(
         list.add(to.coerceIn(0, list.size), card)
         items = list
         onOrder(list.map { it.id })
+    }
+
+    /** Durante il trascinamento: se la carta ha superato il centro di un'altra, scambia le due. */
+    fun onDrag(id: String, delta: Float) {
+        dragOffset += delta
+        val info = listState.layoutInfo
+        val dragged = info.visibleItemsInfo.firstOrNull { it.key == id } ?: return
+        val center = dragged.offset + dragged.size / 2f + dragOffset
+        val target = info.visibleItemsInfo.firstOrNull {
+            it.key != id && center >= it.offset && center < it.offset + it.size
+        }
+        if (target != null) {
+            val list = items.toMutableList()
+            val from = list.indexOfFirst { it.id == id }
+            val to = target.index.coerceIn(0, list.size - 1)
+            if (from >= 0 && from != to) {
+                list.add(to, list.removeAt(from))
+                items = list
+                dragOffset += dragged.offset - target.offset
+            }
+        }
+        // Vicino al bordo dello schermo scorre la lista
+        val top = info.viewportStartOffset + 80f
+        val bottom = info.viewportEndOffset - 80f
+        if (center < top) scope.launch { listState.scrollBy(-24f) }
+        else if (center > bottom) scope.launch { listState.scrollBy(24f) }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -108,43 +148,73 @@ fun ReorderDialog(
                     TextButton(onClick = onDismiss) { Text("Fatto") }
                 }
                 Text(
-                    "Usa ▲ e ▼ per spostare una carta, oppure ⋮ per portarla in cima, in fondo o in una posizione precisa.",
+                    "Tieni premuto ☰ e trascina la carta dove vuoi. Con ⋮ la porti in cima, in fondo o in una posizione precisa.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
-                LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth()) {
                     itemsIndexed(items, key = { _, card -> card.id }) { index, card ->
                         var menuOpen by remember { mutableStateOf(false) }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        val dragging = draggedId == card.id
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .zIndex(if (dragging) 1f else 0f)
+                                .graphicsLayer { translationY = if (dragging) dragOffset else 0f },
+                            color = if (dragging) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.background,
+                            shadowElevation = if (dragging) 8.dp else 0.dp
                         ) {
-                            Text(
-                                "${index + 1}",
-                                style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier.width(36.dp)
-                            )
-                            CardImage(
-                                imageUrl = card.imageUrl,
-                                catalogKey = CardEntryId.catalogKeyOf(card.id),
-                                name = card.name,
-                                modifier = Modifier.width(40.dp).height(56.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                                Text(card.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                Text("${card.set} · ${card.number}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            }
-                            TextButton(enabled = index > 0, onClick = { move(card, index - 1) }) { Text("▲") }
-                            TextButton(enabled = index < items.size - 1, onClick = { move(card, index + 1) }) { Text("▼") }
-                            Box {
-                                IconButton(onClick = { menuOpen = true }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "Altro")
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "${index + 1}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.width(36.dp)
+                                )
+                                CardImage(
+                                    imageUrl = card.imageUrl,
+                                    catalogKey = CardEntryId.catalogKeyOf(card.id),
+                                    name = card.name,
+                                    modifier = Modifier.width(40.dp).height(56.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                                    Text(card.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    Text("${card.set} · ${card.number}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
                                 }
-                                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                    DropdownMenuItem(text = { Text("In cima") }, onClick = { menuOpen = false; move(card, 0) })
-                                    DropdownMenuItem(text = { Text("In fondo") }, onClick = { menuOpen = false; move(card, items.size) })
-                                    DropdownMenuItem(text = { Text("In posizione…") }, onClick = { menuOpen = false; positionFor = card })
+                                Box {
+                                    IconButton(onClick = { menuOpen = true }) {
+                                        Icon(Icons.Default.MoreVert, contentDescription = "Altro")
+                                    }
+                                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                        DropdownMenuItem(text = { Text("In cima") }, onClick = { menuOpen = false; move(card, 0) })
+                                        DropdownMenuItem(text = { Text("In fondo") }, onClick = { menuOpen = false; move(card, items.size) })
+                                        DropdownMenuItem(text = { Text("In posizione…") }, onClick = { menuOpen = false; positionFor = card })
+                                    }
                                 }
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .pointerInput(card.id) {
+                                            detectDragGestures(
+                                                onDragStart = { draggedId = card.id; dragOffset = 0f },
+                                                onDragEnd = {
+                                                    draggedId = null; dragOffset = 0f
+                                                    onOrder(items.map { it.id })
+                                                },
+                                                onDragCancel = {
+                                                    draggedId = null; dragOffset = 0f
+                                                    onOrder(items.map { it.id })
+                                                },
+                                                onDrag = { change, amount ->
+                                                    change.consume()
+                                                    onDrag(card.id, amount.y)
+                                                }
+                                            )
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) { Text("☰", style = MaterialTheme.typography.titleLarge) }
                             }
                         }
                     }
