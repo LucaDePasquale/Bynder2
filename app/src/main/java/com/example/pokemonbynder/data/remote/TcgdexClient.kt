@@ -128,6 +128,39 @@ class TcgdexClient {
         null
     }
 
+    /**
+     * Altre fonti di immagini (inglesi, per i set troppo nuovi per TCGdex): Scrydex e PokeScope.
+     * Si usa la prima il cui indirizzo risponde con un'immagine.
+     */
+    suspend fun findExternalImage(lang: String, setCode: String, number: String): String? = withContext(Dispatchers.IO) {
+        val digits = number.trimStart('0').ifEmpty { "0" }
+        if (!digits.all { it.isLetterOrDigit() }) return@withContext null
+        val code = setCode.lowercase()
+        val codes = listOf(code, code.replace(Regex("([a-z]+)0+([0-9])")) { it.groupValues[1] + it.groupValues[2] }).distinct()
+        val candidates = ArrayList<String>()
+        for (c in codes) {
+            candidates += if (lang == "ja") "https://images.scrydex.com/pokemon/${c}_ja-$digits/large"
+            else "https://images.scrydex.com/pokemon/$c-$digits/large"
+        }
+        if (lang != "ja") for (c in codes) candidates += "https://assets.pokescope.app/cards/$c-$digits/hires.png"
+        candidates.firstOrNull { isImage(it) }
+    }
+
+    private fun isImage(url: String): Boolean {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        return try {
+            connection.requestMethod = "HEAD"
+            connection.connectTimeout = TIMEOUT_MS
+            connection.readTimeout = TIMEOUT_MS
+            connection.responseCode == HttpURLConnection.HTTP_OK &&
+                (connection.contentType ?: "").startsWith("image")
+        } catch (e: IOException) {
+            false
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun imageOf(lang: String, id: String): String? {
         return try {
             val json = JSONObject(get("$BASE_URL/$lang/cards/${encode(id)}"))

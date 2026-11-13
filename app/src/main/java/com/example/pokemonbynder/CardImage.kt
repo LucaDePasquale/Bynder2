@@ -46,7 +46,7 @@ class ImageResolver(private val repository: PokemonRepository) {
         if (catalogKey in missing) return null
         return gate.withPermit {
             try {
-                val url = repository.findImageOnline(catalogKey)
+                val url = repository.findImageOnline(catalogKey, failedUrl)
                 if (url == null || sameImage(url, failedUrl)) {
                     missing.add(catalogKey)
                     null

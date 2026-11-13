@@ -46,7 +46,7 @@ class CatalogImporter(
         }
 
         /** Incrementa questo numero ogni volta che sostituisci il file catalog.tsv.gz. */
-        const val CATALOG_VERSION = 3
+        const val CATALOG_VERSION = 4
 
         private const val PREFS = "catalog_import"
         private const val KEY_VERSION = "version"

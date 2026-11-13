@@ -235,19 +235,34 @@ class PokemonRepository(
     /** Aggiunge i dati mancanti a una carta trovata online (set, rarità, autore...). */
     suspend fun completeOnlineCard(card: CatalogCard): CatalogCard = tcgdex.completeCard(card)
 
-    /** Cerca online l'immagine di una carta e la salva dove la carta compare; null se non esiste. */
-    suspend fun findImageOnline(catalogKey: String): String? {
+    /**
+     * Cerca l'immagine di una carta e la salva dove la carta compare; null se non esiste.
+     * Ordine: catalogo aggiornato, TCGdex, stessa carta nell'altra lingua, altre fonti inglesi.
+     * [failedUrl] è l'indirizzo che non si è caricato: non si restituisce di nuovo.
+     */
+    suspend fun findImageOnline(catalogKey: String, failedUrl: String? = null): String? {
         val lang = catalogKey.substringBefore(':')
         val setCode = catalogKey.substringAfter(':', "").substringBeforeLast(':', "")
         val number = catalogKey.substringAfterLast(':')
         if (setCode.isEmpty() || number.isEmpty()) return null
-        val online = tcgdex.findImage(lang, setCode, number)
-        if (online == null) {
-            // Niente online: si usa l'immagine della stessa carta nell'altra lingua (se il catalogo la ha), senza salvarla
-            return twinImage(lang, setCode, number)
+
+        fun usable(url: String?): String? =
+            url?.takeIf { it.isNotBlank() && (failedUrl == null || it.substringBeforeLast('.') != failedUrl.substringBeforeLast('.')) }
+
+        // 1) il catalogo del telefono (si aggiorna con l'app) può avere un indirizzo nuovo
+        usable(catalogDao.cardsOfSet(lang, setCode).firstOrNull { it.number == number }?.imageUrl)?.let {
+            setCardImage(catalogKey, it)
+            return it
         }
-        setCardImage(catalogKey, online)
-        return online
+        // 2) TCGdex
+        usable(tcgdex.findImage(lang, setCode, number))?.let {
+            setCardImage(catalogKey, it)
+            return it
+        }
+        // 3) la stessa carta nell'altra lingua e 4) altre fonti (sono in inglese: non si salvano, così se
+        // TCGdex avrà l'immagine giusta verrà usata quella)
+        usable(twinImage(lang, setCode, number))?.let { return it }
+        return usable(tcgdex.findExternalImage(lang, setCode, number))
     }
 
     /** Salva l'immagine di una carta ovunque compaia: catalogo, binder e wishlist. */
