@@ -533,6 +533,21 @@ class PokemonViewModel(
         }
     }
 
+    /** Imposta a mano la foto di una carta (in tutti i binder e nella wishlist). */
+    fun setCardImage(card: PokemonCard, imageUrl: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.setCardImage(CardEntryId.catalogKeyOf(card.id), imageUrl)
+                onResult(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PokemonViewModel", "Salvataggio della foto non riuscito", e)
+                onResult(false)
+            }
+        }
+    }
+
     /** Copia o sposta le carte in un altro binder; [onResult] riceve (fatte, saltate), fatte = -1 se fallisce. */
     fun transferCards(cards: List<PokemonCard>, targetBinderId: Long, move: Boolean, onResult: (Int, Int) -> Unit) {
         viewModelScope.launch {

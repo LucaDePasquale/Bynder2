@@ -1,5 +1,12 @@
 package com.example.pokemonbynder
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -8,7 +15,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.example.pokemonbynder.data.repository.PokemonRepository
@@ -56,7 +68,7 @@ val LocalImageResolver = staticCompositionLocalOf<ImageResolver?> { null }
 
 /**
  * Immagine di una carta. Se manca o non si carica, prova la variante .png e poi la cerca online
- * (TCGdex), anche in un'altra lingua.
+ * (TCGdex), anche in un'altra lingua. Se non si trova da nessuna parte mostra un riquadro con il nome.
  */
 @Composable
 fun CardImage(
@@ -70,29 +82,61 @@ fun CardImage(
     val scope = rememberCoroutineScope()
     var url by remember(imageUrl, catalogKey) { mutableStateOf(imageUrl.ifBlank { null }) }
     var stage by remember(imageUrl, catalogKey) { mutableStateOf(0) }
+    var failed by remember(imageUrl, catalogKey) { mutableStateOf(false) }
 
     LaunchedEffect(imageUrl, catalogKey) {
-        if (imageUrl.isBlank() && catalogKey.isNotBlank() && resolver != null) {
-            resolver.resolve(catalogKey, null)?.let { url = it }
+        if (imageUrl.isBlank()) {
+            val resolved = if (catalogKey.isNotBlank() && resolver != null) resolver.resolve(catalogKey, null) else null
+            if (resolved != null) url = resolved else failed = true
         }
     }
 
-    AsyncImage(
-        model = url,
-        contentDescription = name,
-        modifier = modifier,
-        contentScale = contentScale,
-        onError = {
-            val failed = url
-            if (failed != null && resolver != null && catalogKey.isNotBlank()) {
-                if (stage == 0 && failed.endsWith(".webp")) {
-                    stage = 1
-                    url = failed.removeSuffix(".webp") + ".png"
-                } else if (stage < 2) {
-                    stage = 2
-                    scope.launch { resolver.resolve(catalogKey, failed)?.let { url = it } }
+    Box(modifier = modifier) {
+        AsyncImage(
+            model = url,
+            contentDescription = name,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = contentScale,
+            onSuccess = { failed = false },
+            onError = {
+                val failedUrl = url
+                if (failedUrl != null && resolver != null && catalogKey.isNotBlank()) {
+                    if (stage == 0 && failedUrl.endsWith(".webp")) {
+                        stage = 1
+                        url = failedUrl.removeSuffix(".webp") + ".png"
+                    } else if (stage < 2) {
+                        stage = 2
+                        scope.launch {
+                            val resolved = resolver.resolve(catalogKey, failedUrl)
+                            if (resolved != null) url = resolved else failed = true
+                        }
+                    } else {
+                        failed = true
+                    }
+                } else {
+                    failed = true
                 }
             }
+        )
+        if (failed) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(2.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(4.dp)
+                )
+            }
         }
-    )
+    }
 }

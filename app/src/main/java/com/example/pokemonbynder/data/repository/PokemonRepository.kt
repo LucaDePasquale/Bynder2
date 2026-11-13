@@ -241,11 +241,30 @@ class PokemonRepository(
         val setCode = catalogKey.substringAfter(':', "").substringBeforeLast(':', "")
         val number = catalogKey.substringAfterLast(':')
         if (setCode.isEmpty() || number.isEmpty()) return null
-        val url = tcgdex.findImage(lang, setCode, number) ?: return null
+        val online = tcgdex.findImage(lang, setCode, number)
+        if (online == null) {
+            // Niente online: si usa l'immagine della stessa carta nell'altra lingua (se il catalogo la ha), senza salvarla
+            return twinImage(lang, setCode, number)
+        }
+        setCardImage(catalogKey, online)
+        return online
+    }
+
+    /** Salva l'immagine di una carta ovunque compaia: catalogo, binder e wishlist. */
+    suspend fun setCardImage(catalogKey: String, url: String) {
+        val lang = catalogKey.substringBefore(':')
+        val setCode = catalogKey.substringAfter(':', "").substringBeforeLast(':', "")
+        val number = catalogKey.substringAfterLast(':')
         catalogDao.updateImage(lang, setCode, number, url)
         pokemonDao.updateImageByKey(catalogKey, url)
         wishlistDao.updateImage(catalogKey, url)
-        return url
+    }
+
+    private suspend fun twinImage(lang: String, setCode: String, number: String): String? {
+        val targetLang = if (lang == "it") "en" else if (lang == "en") "it" else return null
+        val pairCode = setPairs["$lang:$setCode"] ?: return null
+        val key = CardText.normalizeNumber(number)
+        return catalogDao.cardsOfSet(targetLang, pairCode).firstOrNull { it.numberKey == key }?.imageUrl?.takeIf { it.isNotBlank() }
     }
 
     private val setPairs: Map<String, String> by lazy { loadSetPairs() }

@@ -180,6 +180,23 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
     // Finestre e dialoghi
     var cardToEdit by remember { mutableStateOf<PokemonCard?>(null) }
     var detailsCard by remember { mutableStateOf<PokemonCard?>(null) }
+    var photoForCard by remember { mutableStateOf<PokemonCard?>(null) }
+    val cardPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val target = photoForCard
+        photoForCard = null
+        if (uri != null && target != null) {
+            scope.launch {
+                val image = PhotoReader.saveCopy(context, uri)
+                if (image == null) {
+                    Toast.makeText(context, "Impossibile salvare la foto", Toast.LENGTH_LONG).show()
+                } else {
+                    viewModel.setCardImage(target, image) { ok ->
+                        Toast.makeText(context, if (ok) "Foto aggiornata" else "Errore nel salvataggio", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
     var previewId by remember { mutableStateOf<String?>(null) }
     var cardToDelete by remember { mutableStateOf<PokemonCard?>(null) }
     var showSourceDialog by remember { mutableStateOf(false) }
@@ -734,7 +751,8 @@ fun MainScreen(viewModel: PokemonViewModel, catalogError: StateFlow<String?>, se
                         cardToEdit = null
                     },
                     onDismiss = { cardToEdit = null },
-                    onEditDetails = if (isCustomCard(card)) ({ cardToEdit = null; detailsCard = card }) else null
+                    onEditDetails = if (isCustomCard(card)) ({ cardToEdit = null; detailsCard = card }) else null,
+                    onPickPhoto = { cardToEdit = null; photoForCard = card; cardPhotoLauncher.launch("image/*") }
                 )
             }
 
@@ -1069,6 +1087,7 @@ fun EditCardDialog(
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
     onEditDetails: (() -> Unit)? = null,
+    onPickPhoto: (() -> Unit)? = null,
     onlinePrice: Double? = null,
     manualPrice: Double? = null,
     onSetManualPrice: (Double?) -> Unit = {}
@@ -1149,6 +1168,10 @@ fun EditCardDialog(
                     BinderPicker(binders = binders, selectedId = selectedBinderId, onSelect = { selectedBinderId = it })
                 }
 
+                if (onPickPhoto != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = onPickPhoto) { Text("Scegli la foto dalla galleria") }
+                }
                 if (onEditDetails != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     TextButton(onClick = onEditDetails) { Text("Modifica nome, set, numero…") }
