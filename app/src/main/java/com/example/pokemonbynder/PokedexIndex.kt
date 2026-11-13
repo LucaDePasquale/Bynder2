@@ -28,19 +28,30 @@ class PokedexIndex(private val context: Context) {
     private val names: Map<String, Int> by lazy { load() }
     private val cache = ConcurrentHashMap<String, Int>()
 
+    /** Numero stampato su ogni carta (dai dati di TCGdex), per chiave "lingua:set:numero". 0 = non è un Pokémon. */
+    private val perCard: Map<String, Int> by lazy { load("dexcards.tsv.gz", 48000) }
+
+    /** Prima il numero della carta esatta; se non c'è (carta creata da foto, set mancante) si cerca dal nome. */
+    fun dexOf(catalogKey: String, cardName: String): Int {
+        perCard[catalogKey]?.let { return if (it > 0) it else NONE }
+        return dexOf(cardName)
+    }
+
     fun dexOf(cardName: String): Int = cache.getOrPut(cardName) { lookup(cardName) }
 
-    private fun load(): Map<String, Int> {
-        val map = HashMap<String, Int>(8192)
+    private fun load(): Map<String, Int> = load("dex.tsv.gz", 8192)
+
+    private fun load(asset: String, size: Int): Map<String, Int> {
+        val map = HashMap<String, Int>(size)
         try {
-            GZIPInputStream(context.assets.open("dex.tsv.gz")).use { stream ->
+            GZIPInputStream(context.assets.open(asset)).use { stream ->
                 BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).forEachLine { line ->
                     val tab = line.indexOf('\t')
                     if (tab > 0) line.substring(tab + 1).trim().toIntOrNull()?.let { map[line.substring(0, tab)] = it }
                 }
             }
         } catch (e: Exception) {
-            Log.e("PokedexIndex", "Elenco del Pokédex non caricato", e)
+            Log.e("PokedexIndex", "Elenco del Pokédex non caricato: $asset", e)
         }
         return map
     }

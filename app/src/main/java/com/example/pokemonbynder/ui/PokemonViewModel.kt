@@ -174,7 +174,7 @@ class PokemonViewModel(
             SortOrder.NAME -> filtered.sortedWith(compareBy({ it.name.lowercase() }, { it.set }))
             SortOrder.SET -> filtered.sortedWith(compareBy({ it.set.lowercase() }, { numberOrder(it.number) }, { it.number }))
             SortOrder.NUMBER -> filtered.sortedWith(compareBy({ numberOrder(it.number) }, { it.number }, { it.name.lowercase() }))
-            SortOrder.DEX -> filtered.sortedWith(compareBy({ pokedex.dexOf(it.name) }, { it.name.lowercase() }, { it.set.lowercase() }))
+            SortOrder.DEX -> filtered.sortedWith(compareBy({ pokedex.dexOf(CardEntryId.catalogKeyOf(it.id), it.name) }, { it.name.lowercase() }, { it.set.lowercase() }))
             // Prima le più rare; a parità, per nome
             SortOrder.RARITY -> filtered.sortedWith(compareByDescending<PokemonCard> { rarityRank(it.rarity) }.thenBy { it.name.lowercase() })
             // L'ordine a mano esiste solo dentro un binder; tra tutte le carte si usano le più recenti
